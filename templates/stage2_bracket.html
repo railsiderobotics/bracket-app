@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}Stage 2 Bracket{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('index') }}">&larr; Back to dashboard</a></p>
+<h2>Stage 2 — Bracket View</h2>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('stage2_bracket', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+{% if not qualifiers_ready %}
+  <div class="alert alert-warning">Finish Stage 1 and the decider round first.</div>
+{% else %}
+  <!-- Check if Round 1 has actual DB matches generated -->
+  {% set bracket_generated = bracket and bracket[0].generated %}
+
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <a class="btn btn-outline-primary" href="{{ url_for('stage2', round_num=session.get('stage2_last_round_' ~ current_class, 1), **{'class': current_class}) }}">View Matches</a>
+    </div>
+
+    <!-- Generate / Re-generate Bracket Action Form -->
+    <form method="post" action="{{ url_for('stage2_bracket', **{'class': current_class}) }}" class="m-0">
+      <input type="hidden" name="action" value="generate_round1">
+      {% if not bracket_generated %}
+        <button class="btn btn-success fw-bold">⚡ Generate Stage 2 Bracket</button>
+      {% else %}
+        <button class="btn btn-outline-warning btn-sm" onclick="return confirm('Re-generating will erase current Stage 2 results. Continue?');">Re-generate Bracket</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if not bracket_generated %}
+    <div class="alert alert-info mb-4">
+      Bracket structure preview shown below. Click <strong>Generate Stage 2 Bracket</strong> above to seed qualifiers and begin Stage 2.
+    </div>
+  {% endif %}
+
+  <style>
+    .bracket-column { min-width: 240px; display: flex; align-items: center; }
+    .bracket-card { background: #f8f9fa; border: 1px solid rgba(0,0,0,.08); min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    .bracket-match { background: white; border: 1px solid rgba(0,0,0,.08); border-radius: .5rem; padding: .75rem; }
+    .bracket-match + .bracket-match { margin-top: .75rem; }
+    .bracket-match .team-name { font-weight: 600; }
+    .bracket-match .vs-tag { color: #6c757d; font-size: .9rem; margin: .5rem 0; }
+    .bracket-match .badge-advance { font-size: .75rem; }
+  </style>
+
+  <div class="row gx-3 gy-4 align-items-center">
+    {% for round in bracket %}
+      <div class="col-12 col-md bracket-column">
+        <div class="card bracket-card h-100 p-3">
+          <div class="fw-bold mb-3">Round {{ round.round }}</div>
+          <div class="d-flex flex-column">
+            {% for match in round.matches %}
+              <div class="bracket-match">
+                <div class="team-name">{{ match.team1.name if match.team1 else 'TBD' }}</div>
+                <div class="vs-tag">vs</div>
+                <div class="team-name">{{ match.team2.name if match.team2 else 'TBD' }}</div>
+                {% if round.generated and match.is_bye %}
+                  <div class="mt-2"><span class="badge bg-info badge-advance">BYE</span></div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if champion %}
+    <div class="text-center mt-4 alert alert-success fs-4">👑 Champion: {{ champion.name }}</div>
+  {% endif %}
+
+  {% if placement_match %}
+    <div class="card mt-4 p-3">
+      <h5>Bronze Placement Match</h5>
+      <div class="row g-3 mt-1">
+        <div class="col-md-6">
+          <div class="border rounded p-3 bg-white">
+            <div class="fw-semibold">{{ placement_match.team1.name if placement_match.team1 else 'TBD' }}</div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="border rounded p-3 bg-white">
+            <div class="fw-semibold">{{ placement_match.team2.name if placement_match.team2 else 'TBD' }}</div>
+          </div>
+        </div>
+      </div>
+      {% if placement_match.winner_id %}
+        <div class="mt-3"><span class="badge bg-success">Winner: {{ placement_match.winner.name }}</span></div>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

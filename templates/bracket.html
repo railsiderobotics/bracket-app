@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+{% block content %}
+<p><a href="{{ url_for('index') }}">&larr; Back to dashboard</a></p>
+<h2>Stage 2 — Single Elimination</h2>
+
+{% if not qualifiers_ready %}
+  <div class="alert alert-warning">Finish Stage 1 (both rounds) and the decider round first.</div>
+{% elif not all_rounds %}
+  <div class="text-center py-5">
+    <img src="https://via.placeholder.com/600x320?text=Empty+Bracket" alt="Empty bracket" class="img-fluid mb-3" style="max-height:320px;">
+    <p>No bracket generated yet. This will seed byes to the 2-0 teams first, then decider-round winners,
+       and round the field up to the next power of two.</p>
+  </div>
+  <form method="post" action="{{ url_for('stage2', round_num=1) }}">
+    <input type="hidden" name="action" value="generate_round1">
+    <input type="hidden" name="class" value="{{ current_class }}">
+    <button class="btn btn-success">Generate Stage 2 Bracket</button>
+  </form>
+{% else %}
+  <div class="d-flex gap-4 overflow-auto">
+    {% for r, ms in all_rounds.items() %}
+      <div>
+        <h5>Round {{ r }}{% if ms|length == 1 %} (Final){% endif %}</h5>
+        {% if r == round_num %}
+        <form method="post" action="{{ url_for('stage2', round_num=r) }}?class={{ current_class }}">
+          <input type="hidden" name="action" value="results">
+          <input type="hidden" name="class" value="{{ current_class }}">
+        {% endif %}
+        <table class="table table-sm bg-white">
+            {% for m in ms %}
+            <tr>
+              {% if m.is_bye %}
+                <td colspan="2"><em>{{ m.team1.name }} — BYE</em></td>
+              {% elif r == round_num and not m.winner_id %}
+                <td class="text-dark">{{ m.team1.name if m.team1 else '?' }}</td>
+                <td class="text-dark">{{ m.team2.name if m.team2 else '?' }}</td>
+              {% else %}
+                <td class="{{ 'fw-bold text-success' if m.winner_id==m.team1_id else '' }} text-dark">{{ m.team1.name if m.team1 else '?' }}</td>
+                <td class="{{ 'fw-bold text-success' if m.winner_id==m.team2_id else '' }} text-dark">{{ m.team2.name if m.team2 else '?' }}</td>
+              {% endif %}
+            </tr>
+            {% if r == round_num and not m.is_bye %}
+            <tr>
+              <td colspan="2">
+                <div class="d-grid gap-2 mb-3">
+                  <button type="button" class="btn btn-outline-primary winner-toggle top {% if m.winner_id==m.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team1_id }}" data-no-submit="1">
+                    {{ m.team1.name if m.team1 else '?' }}
+                  </button>
+                  <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if m.winner_id==m.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team2_id }}" data-no-submit="1">
+                    {{ m.team2.name if m.team2 else '?' }}
+                  </button>
+                </div>
+                <input type="hidden" name="winner_{{ m.id }}" id="winner_input_{{ m.id }}" value="{{ m.winner_id or '' }}">
+                <!-- result_type buttons removed for Stage 2 -->
+              </td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+        </table>
+        {% if r == round_num %}
+          <button class="btn btn-primary btn-sm">Submit Round {{ r }} Results</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if placement_match %}
+    <div class="card bg-light p-3 mt-4">
+      <h5>Bronze Placement</h5>
+      <form method="post" action="{{ url_for('stage2', round_num=round_num) }}?class={{ current_class }}">
+        <input type="hidden" name="action" value="results">
+        <input type="hidden" name="class" value="{{ current_class }}">
+        <table class="table table-sm bg-white mt-3">
+          <tr>
+            <td class="text-dark">{{ placement_match.team1.name }}</td>
+            <td class="text-dark">{{ placement_match.team2.name }}</td>
+          </tr>
+          <tr>
+            <td colspan="2">
+              <div class="d-grid gap-2 mb-3">
+                <button type="button" class="btn btn-outline-primary winner-toggle top {% if placement_match.winner_id==placement_match.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team1_id }}" data-no-submit="1">
+                  {{ placement_match.team1.name if placement_match.team1 else '?' }}
+                </button>
+                <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if placement_match.winner_id==placement_match.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team2_id }}" data-no-submit="1">
+                  {{ placement_match.team2.name if placement_match.team2 else '?' }}
+                </button>
+              </div>
+              <input type="hidden" name="winner_{{ placement_match.id }}" id="winner_input_{{ placement_match.id }}" value="{{ placement_match.winner_id or '' }}">
+              <!-- result_type removed for Stage 2 -->
+            </td>
+          </tr>
+        </table>
+        <button class="btn btn-primary btn-sm">Submit Bronze Result</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% if complete and not is_final %}
+    <form method="post" action="{{ url_for('stage2', round_num=round_num + 1) }}" class="mt-3">
+      <input type="hidden" name="action" value="generate_next">
+      <input type="hidden" name="class" value="{{ current_class }}">
+      <button class="btn btn-success">Generate Next Round</button>
+    </form>
+  {% endif %}
+
+  {% if is_final %}
+    <div class="alert alert-success mt-3 fs-4">🏆 Champion: {{ champion.display_name }}</div>
+    <div class="row mt-3">
+      <div class="col-md-4">
+        <div class="card border-warning p-3 mb-3">
+          <div class="fs-3">🥇 1st</div>
+          <div class="fw-bold">{{ champion.display_name }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card border-secondary p-3 mb-3">
+          <div class="fs-3">🥈 2nd</div>
+          <div class="fw-bold">{{ second_place.display_name if second_place else 'TBD' }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card border-danger p-3 mb-3">
+          <div class="fs-3">🥉 3rd</div>
+          <div class="fw-bold">{{ third_place.display_name if third_place else 'TBD' }}</div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

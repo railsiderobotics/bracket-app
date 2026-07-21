@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% block title %}Match Results{% endblock %}
+
+{% block content %}
+<h2>Match Results</h2>
+
+<!-- Weight Class Tabs -->
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('competitor_results', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+{% if not grouped_matches %}
+  <div class="alert alert-info">No match results available yet for {{ CLASS_LABELS[current_class] }}.</div>
+{% else %}
+  {% for stage_label, matches in grouped_matches.items() %}
+    <div class="card mb-4 shadow-sm">
+      <div class="card-header bg-dark text-white fw-bold">
+        {{ stage_label }}
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          {% for m in matches %}
+            <div class="col-md-4">
+              <div class="card h-100 border-light bg-white shadow-sm">
+                <div class="card-body">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="card-title text-muted mb-0">Match {{ loop.index }}</h6>
+                    
+                    <!-- Dynamic Color-Coded Result Type Badge -->
+                    {% if m.result_type == 'KO' %}
+                      <span class="badge" style="background-color: rgb(227,43,7);">KO</span>
+                    {% elif m.result_type == 'JD' %}
+                      <span class="badge" style="background-color: rgb(227,139,7);">JD</span>
+                    {% elif m.result_type == 'TO' %}
+                      <span class="badge" style="background-color: rgb(7,62,227);">TO</span>
+                    {% elif m.result_type %}
+                      <span class="badge bg-secondary">{{ m.result_type }}</span>
+                    {% endif %}
+                  </div>
+
+                  {% if m.is_bye %}
+                    <div class="p-2 border rounded bg-success text-white fw-bold d-flex justify-content-between align-items-center mb-1">
+                      <span>{{ m.team1.name }}</span>
+                      <span>✓</span>
+                    </div>
+                    <span class="badge bg-info">BYE</span>
+                  {% else %}
+                    <div class="mb-0">
+                      <!-- Bot 1 Box -->
+                      <div class="p-2 border rounded mb-2 d-flex justify-content-between align-items-center {% if m.winner_id == m.team1_id %}bg-success text-white fw-bold{% endif %}">
+                        <span>{{ m.team1.name }}</span>
+                        {% if m.winner_id == m.team1_id %}<span>✓</span>{% endif %}
+                      </div>
+                      
+                      <!-- Bot 2 Box -->
+                      <div class="p-2 border rounded d-flex justify-content-between align-items-center {% if m.winner_id == m.team2_id %}bg-success text-white fw-bold{% endif %}">
+                        <span>{{ m.team2.name }}</span>
+                        {% if m.winner_id == m.team2_id %}<span>✓</span>{% endif %}
+                      </div>
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}

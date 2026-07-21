@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% block title %}Match Queue Control{% endblock %}
+
+{% block content %}
+<h2>Match Queue Control</h2>
+
+<!-- Weight Class Tabs -->
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('queue', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4>1. Active & Queued Matches</h4>
+  <form method="post">
+    <input type="hidden" name="action" value="auto_fill_queue">
+    <button class="btn btn-outline-primary btn-sm">Refresh Upcoming Matches into Queue</button>
+  </form>
+</div>
+
+<!-- CURRENT MATCH IN PROGRESS -->
+<div class="card border-primary mb-4 shadow-sm">
+  <div class="card-header bg-primary text-white font-weight-bold d-flex justify-content-between align-items-center">
+    <span>🚨 Currently Occurring Match</span>
+  </div>
+  <div class="card-body">
+    {% if in_progress %}
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+        <div class="fs-5 fw-bold">
+          🔴 {{ in_progress.team1.name }} <span class="badge bg-secondary">Pit {{ in_progress.team1.pit_table_number or 'N/A' }}</span>
+          <span class="text-muted mx-2">vs</span>
+          🔵 {{ in_progress.team2.name }} <span class="badge bg-secondary">Pit {{ in_progress.team2.pit_table_number or 'N/A' }}</span>
+        </div>
+        <div class="d-flex gap-2">
+          <!-- Move to Results Queue -->
+          <form method="post" class="m-0">
+            <input type="hidden" name="action" value="finish_match">
+            <input type="hidden" name="match_id" value="{{ in_progress.id }}">
+            <button class="btn btn-success">Move to Results Queue</button>
+          </form>
+          <!-- Send back to bottom of upcoming queue -->
+          <form method="post" class="m-0">
+            <input type="hidden" name="action" value="requeue_bottom">
+            <input type="hidden" name="match_id" value="{{ in_progress.id }}">
+            <button class="btn btn-warning">Re-queue to Bottom</button>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">No match currently in progress.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- DRAG AND DROP QUEUE LIST -->
+<div class="card mb-4">
+  <div class="card-header bg-light fw-bold">Upcoming Queue (Drag to Reorder)</div>
+  <ul class="list-group list-group-flush" id="queueList">
+    {% for m in queued_matches %}
+      <li class="list-group-item d-flex justify-content-between align-items-center" data-id="{{ m.id }}" style="cursor: grab;">
+        <div>
+          <!-- Dynamic Badges -->
+          {% if loop.index == 1 %}
+            <span class="badge bg-danger me-2">UP NEXT</span>
+          {% elif loop.index == 2 %}
+            <span class="badge bg-warning text-dark me-2">ON DECK</span>
+          {% elif loop.index == 3 %}
+            <span class="badge bg-info text-dark me-2">IN THE HOLE</span>
+          {% else %}
+            <span class="badge bg-light text-dark border me-2">#{{ loop.index }}</span>
+          {% endif %}
+
+          <strong>{{ m.team1.name }}</strong> <span class="badge bg-outline-secondary text-dark border">Pit {{ m.team1.pit_table_number or 'N/A' }}</span>
+          <span class="text-muted px-2">vs</span>
+          <strong>{{ m.team2.name }}</strong> <span class="badge bg-outline-secondary text-dark border">Pit {{ m.team2.pit_table_number or 'N/A' }}</span>
+        </div>
+
+        {% if not in_progress and loop.index == 1 %}
+          <form method="post" class="m-0">
+            <input type="hidden" name="action" value="start_match">
+            <input type="hidden" name="match_id" value="{{ m.id }}">
+            <button class="btn btn-success btn-sm">Start Match</button>
+          </form>
+        {% endif %}
+      </li>
+    {% else %}
+      <li class="list-group-item text-muted text-center">No matches currently in queue.</li>
+    {% endfor %}
+  </ul>
+</div>
+
+<hr class="my-4">
+
+<!-- 2. AWAITING RESULTS SECTION -->
+<div class="card mb-4 border-warning">
+  <div class="card-header bg-warning text-dark fw-bold">2. Completed Matches (Awaiting Results Entry)</div>
+  <ul class="list-group list-group-flush">
+    {% for m in awaiting_results %}
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <strong>{{ m.team1.name }}</strong> (Pit: {{ m.team1.pit_table_number or 'N/A' }}) 
+          <span class="text-muted px-1">vs</span> 
+          <strong>{{ m.team2.name }}</strong> (Pit: {{ m.team2.pit_table_number or 'N/A' }})
+        </div>
+        <div class="d-flex gap-2">
+          <!-- Dynamic URL depending on match stage -->
+          {% if m.stage == 's1_r1' %}
+            <a class="btn btn-outline-dark btn-sm" href="{{ url_for('s1_r1', **{'class': current_class}) }}#results">Enter Winner</a>
+          {% elif m.stage == 's1_r2' %}
+            <a class="btn btn-outline-dark btn-sm" href="{{ url_for('s1_r2', **{'class': current_class}) }}#results">Enter Winner</a>
+          {% elif m.stage == 'decider' %}
+            <a class="btn btn-outline-dark btn-sm" href="{{ url_for('decider', **{'class': current_class}) }}#results">Enter Winner</a>
+          {% else %}
+            <a class="btn btn-outline-dark btn-sm" href="{{ url_for('stage2', round_num=m.round_num, **{'class': current_class}) }}#results">Enter Winner</a>
+          {% endif %}
+
+          <form method="post" class="m-0">
+            <input type="hidden" name="action" value="requeue_bottom">
+            <input type="hidden" name="match_id" value="{{ m.id }}">
+            <button class="btn btn-outline-warning btn-sm">Re-queue to Bottom</button>
+          </form>
+        </div>
+      </li>
+    {% else %}
+      <li class="list-group-item text-muted">No matches awaiting result entry.</li>
+    {% endfor %}
+  </ul>
+</div>
+
+<!-- 3. FINISHED / COMPLETED MATCHES -->
+<div class="card mb-4 border-secondary">
+  <div class="card-header bg-secondary text-white fw-bold">3. Completed Matches</div>
+  <ul class="list-group list-group-flush">
+    {% for m in completed_matches %}
+      <li class="list-group-item d-flex justify-content-between align-items-center text-muted">
+        <div>
+          <strong>{{ m.team1.name }}</strong> (Pit: {{ m.team1.pit_table_number or 'N/A' }})
+          <span class="px-1">vs</span> 
+          <strong>{{ m.team2.name }}</strong> (Pit: {{ m.team2.pit_table_number or 'N/A' }})
+          <span class="badge bg-success ms-2">Winner: {{ m.winner.name }}</span>
+        </div>
+        <form method="post" class="m-0">
+          <input type="hidden" name="action" value="requeue_bottom">
+          <input type="hidden" name="match_id" value="{{ m.id }}">
+          <button class="btn btn-outline-warning btn-sm">Re-queue to Bottom</button>
+        </form>
+      </li>
+    {% else %}
+      <li class="list-group-item text-muted">No completed matches yet.</li>
+    {% endfor %}
+  </ul>
+</div>
+
+<!-- Drag-and-Drop JavaScript (SortableJS) -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script>
+  const el = document.getElementById('queueList');
+  if (el) {
+    Sortable.create(el, {
+      animation: 150,
+      onEnd: function () {
+        const order = Array.from(el.querySelectorAll('li')).map(item => item.dataset.id).filter(Boolean);
+        fetch("{{ url_for('reorder_queue') }}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: order })
+        }).then(() => location.reload());
+      }
+    });
+  }
+</script>
+{% endblock %}

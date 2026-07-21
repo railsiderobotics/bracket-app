@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}Global Tournament Settings{% endblock %}
+{% block content %}
+<h2>Global Tournament Settings</h2>
+<p class="text-muted">Toggle which classes are currently participating.</p>
+<form method="post" class="mb-4">
+  <div class="row g-3">
+    {% for setting in settings %}
+      <div class="col-md-4">
+        <div class="form-check card p-3">
+          <input class="form-check-input" type="checkbox" id="enabled_{{ setting.key }}" name="enabled_{{ setting.key }}" {% if setting.enabled %}checked{% endif %}>
+          <label class="form-check-label fw-semibold" for="enabled_{{ setting.key }}">{{ CLASS_LABELS[setting.key] }}</label>
+          <div class="text-muted small mt-2">Enable or disable this class for tournament entry and bracket generation.</div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <button class="btn btn-primary mt-4">Save Settings</button>
+</form>
+{% endblock %}

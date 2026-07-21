@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+{% block title %}Stage 2 Match View{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('index') }}">&larr; Back to dashboard</a></p>
+<h2>Stage 2 — Match View</h2>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('stage2', round_num=session.get('stage2_last_round_' ~ cls, 1), **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+{% if not qualifiers_ready %}
+  <div class="alert alert-warning">Finish Stage 1 and the decider round first.</div>
+{% elif not current_generated %}
+  <div class="text-center py-5">
+    <p>No bracket generated yet.</p>
+    <a class="btn btn-success" href="{{ url_for('stage2_bracket', **{'class': current_class}) }}">Generate Bracket</a>
+  </div>
+{% else %}
+  <div class="card mb-4 p-3">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+      <div>
+        <h3 class="h5 mb-0">Round {{ round_num }}{% if is_final %} — Final{% endif %}</h3>
+        <p class="text-muted mb-0">{{ current_matches|length }} match{{ current_matches|length != 1 and 'es' or '' }} in this round.</p>
+      </div>
+      {% if complete and not next_generated and current_matches|length > 1 %}
+        <form method="post" class="m-0">
+          <input type="hidden" name="action" value="generate_next">
+          <button class="btn btn-success">Advance to Next Round</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if current_locked or next_generated %}
+    <div class="row g-3">
+      {% for m in current_matches %}
+        <div class="col-md-4">
+          <div class="card h-100 border-success shadow-sm">
+            <div class="card-body">
+              <h6 class="card-title">Match {{ loop.index }}</h6>
+              {% if m.is_bye %}
+                <p class="mb-2"><strong>{{ m.team1.name }}</strong></p>
+                <span class="badge bg-info">BYE</span>
+              {% else %}
+                <p class="mb-2"><strong>{{ m.team1.name }}</strong> vs <strong>{{ m.team2.name }}</strong></p>
+                <div class="d-flex flex-wrap gap-2">
+                  <span class="badge bg-success">Winner: {{ m.winner.name if m.winner else 'TBD' }}</span>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Bronze Placement Match (Locked Main Round View) -->
+    {% if placement_match %}
+      {% if placement_complete %}
+        <div class="card mt-4 p-3">
+          <h5 class="mb-3">Bronze Placement Match</h5>
+          <p class="mb-2"><strong>{{ placement_match.team1.name }}</strong> vs <strong>{{ placement_match.team2.name }}</strong></p>
+          <div class="d-flex gap-2">
+            <span class="badge bg-success">Winner: {{ placement_match.winner.name if placement_match.winner else 'TBD' }}</span>
+          </div>
+        </div>
+      {% else %}
+        <form method="post" class="card mt-4 p-3" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+          <input type="hidden" name="action" value="results">
+          <h5 class="mb-3">Bronze Placement Match</h5>
+          <p class="mb-2"><strong>{{ placement_match.team1.name }}</strong> vs <strong>{{ placement_match.team2.name }}</strong></p>
+          
+          <div class="d-grid gap-2 mb-3">
+            <button type="button" class="btn btn-outline-primary winner-toggle top {% if placement_match.winner_id==placement_match.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team1_id }}" data-no-submit="1">
+              <div>{{ placement_match.team1.name }}</div>
+            </button>
+            <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if placement_match.winner_id==placement_match.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team2_id }}" data-no-submit="1">
+              <div>{{ placement_match.team2.name }}</div>
+            </button>
+          </div>
+          <input type="hidden" name="winner_{{ placement_match.id }}" id="winner_input_{{ placement_match.id }}" value="{{ placement_match.winner_id or '' }}">
+
+          <button class="btn btn-primary">Submit Bronze Result</button>
+        </form>
+      {% endif %}
+    {% endif %}
+
+    <!-- Podium Display -->
+    {% if is_final and champion %}
+      <div class="alert alert-primary mt-4 text-center p-4">
+        <h4 class="mb-3">🏆 Tournament Podium</h4>
+        <div class="row g-3 justify-content-center">
+          <div class="col-md-4">
+            <div class="p-3 bg-white text-dark rounded shadow-sm h-100">
+              <div class="fs-5 text-warning fw-bold">👑 1st Place</div>
+              <div class="fw-bold mt-1 fs-6">{{ champion.name }}</div>
+            </div>
+          </div>
+          {% if second_place %}
+          <div class="col-md-4">
+            <div class="p-3 bg-white text-dark rounded shadow-sm h-100">
+              <div class="fs-5 text-secondary fw-bold">🥈 2nd Place</div>
+              <div class="fw-bold mt-1 fs-6">{{ second_place.name }}</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if third_place %}
+          <div class="col-md-4">
+            <div class="p-3 bg-white text-dark rounded shadow-sm h-100">
+              <div class="fs-5 text-danger fw-bold">🥉 3rd Place</div>
+              <div class="fw-bold mt-1 fs-6">{{ third_place.name }}</div>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+  {% else %}
+    <!-- Active Main Round Match Form -->
+    <form method="post" id="results" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+      <input type="hidden" name="action" value="results">
+      <div class="row g-3">
+        {% for m in current_matches %}
+          <div class="col-md-4">
+            <div class="card h-100">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="card-title mb-0">Match {{ loop.index }}</h6>
+                  {% if m.queue_status == 'in_progress' %}
+                    <span class="badge bg-danger">IN PROGRESS</span>
+                  {% elif m.queue_status == 'awaiting_results' %}
+                    <span class="badge bg-warning text-dark">AWAITING RESULT</span>
+                  {% endif %}
+                </div>
+
+                {% if m.is_bye %}
+                  <div class="border rounded p-3 mb-2">
+                    <div class="fw-semibold">{{ m.team1.name }}</div>
+                  </div>
+                  <div class="text-center text-muted">Advances on BYE</div>
+                {% else %}
+                  <div class="d-grid gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-primary winner-toggle top {% if m.winner_id==m.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team1_id }}" data-no-submit="1">
+                      <div>{{ m.team1.name }}</div>
+                    </button>
+                    <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if m.winner_id==m.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team2_id }}" data-no-submit="1">
+                      <div>{{ m.team2.name }}</div>
+                    </button>
+                  </div>
+                  <input type="hidden" name="winner_{{ m.id }}" id="winner_input_{{ m.id }}" value="{{ m.winner_id or '' }}">
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <button class="btn btn-primary mt-3">Submit Results</button>
+    </form>
+
+    <!-- Bronze Placement Match (Active Round Form View) -->
+    {% if placement_match and not placement_complete %}
+      <form method="post" class="card mt-4 p-3" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+        <input type="hidden" name="action" value="results">
+        <h5 class="mb-3">Bronze Placement Match</h5>
+        <p class="mb-2"><strong>{{ placement_match.team1.name }}</strong> vs <strong>{{ placement_match.team2.name }}</strong></p>
+        
+        <div class="d-grid gap-2 mb-3">
+          <button type="button" class="btn btn-outline-primary winner-toggle top {% if placement_match.winner_id==placement_match.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team1_id }}" data-no-submit="1">
+            <div>{{ placement_match.team1.name }}</div>
+          </button>
+          <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if placement_match.winner_id==placement_match.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team2_id }}" data-no-submit="1">
+            <div>{{ placement_match.team2.name }}</div>
+          </button>
+        </div>
+        <input type="hidden" name="winner_{{ placement_match.id }}" id="winner_input_{{ placement_match.id }}" value="{{ placement_match.winner_id or '' }}">
+
+        <button class="btn btn-primary">Submit Bronze Result</button>
+      </form>
+    {% endif %}
+  {% endif %}
+{% endif %}
+{% endblock %}

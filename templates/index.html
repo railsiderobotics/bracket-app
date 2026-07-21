@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Tournament Dashboard</h2>
+<p class="text-muted">{{ teams|length }} active bots.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Stage 1 – Round 1</div>
+      <div class="card-body">
+        <a class="btn btn-primary" href="{{ url_for('s1_r1') }}">Open Round 1</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Stage 1 – Round 2</div>
+      <div class="card-body">
+        <a class="btn btn-primary" href="{{ url_for('s1_r2') }}">Open Round 2</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if s1_done %}
+<div class="card mb-4">
+  <div class="card-header">Stage 1 Standings</div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-4">
+        <h6 class="text-success">2-0 &mdash; Direct to Stage 2 ({{ two_oh|length }})</h6>
+        <ul class="list-group">
+          {% for t in two_oh %}<li class="list-group-item">{{ t.display_name }}</li>{% endfor %}
+        </ul>
+      </div>
+      <div class="col-md-4">
+        <h6 class="text-warning">1-1 &mdash; Decider Round ({{ one_one|length }})</h6>
+        <ul class="list-group">
+          {% for t in one_one %}<li class="list-group-item">{{ t.display_name }}</li>{% endfor %}
+        </ul>
+      </div>
+      <div class="col-md-4">
+        <h6 class="text-danger">0-2 &mdash; Eliminated ({{ oh_two|length }})</h6>
+        <ul class="list-group">
+          {% for t in oh_two %}<li class="list-group-item">{{ t.display_name }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% if incomplete %}
+      <p class="text-muted mt-2">Note: {{ incomplete|length }} team(s) haven't finished both matches yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if decider_needed %}
+<div class="card mb-4">
+  <div class="card-header">Decider Round (1-1 teams)</div>
+  <div class="card-body">
+    <a class="btn btn-warning" href="{{ url_for('decider') }}">Open Decider Round</a>
+  </div>
+</div>
+{% endif %}
+
+{% if (decider_done or not decider_needed) %}
+<div class="card mb-4">
+  <div class="card-header">Stage 2 — Single Elimination</div>
+  <div class="card-body d-flex gap-2 flex-wrap align-items-center">
+    {% if not stage2_started %}
+      <form method="post" action="{{ url_for('stage2_bracket', **{'class': current_class}) }}" class="m-0">
+        <input type="hidden" name="action" value="generate_round1">
+        <button class="btn btn-success fw-bold">⚡ Generate Stage 2 Bracket</button>
+      </form>
+    {% endif %}
+    <a class="btn btn-primary" href="{{ url_for('stage2', round_num=session.get('stage2_last_round_' ~ current_class, 1), **{'class': current_class}) }}">Open Match View</a>
+    <a class="btn btn-secondary" href="{{ url_for('stage2_bracket', **{'class': current_class}) }}">Open Bracket View</a>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+{% block content %}
+<p><a href="{{ back_url }}">&larr; Back to dashboard</a></p>
+<h2>{{ label }}</h2>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for(request.endpoint, **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+{% if not generated %}
+  <p>No pairings generated yet.</p>
+  <form method="post" action="{{ url_for(request.endpoint, **{'class': current_class}) }}">
+    <input type="hidden" name="action" value="generate">
+    <button class="btn btn-primary">Generate Random Pairings</button>
+  </form>
+
+{% elif stage == 's1_r2' and not round1_ready %}
+  <div class="alert alert-warning">Round 2 cannot be opened until all Round 1 results are entered and locked.</div>
+  <p>Finish Round 1 results, then refresh this page to create Round 2.</p>
+
+{% elif not locked %}
+  <p class="text-muted">Review the pairings below, adjust as needed, then lock the round to start entering results.</p>
+  
+  <form method="post" id="editForm" action="{{ url_for(request.endpoint, **{'class': current_class}) }}">
+    <input type="hidden" name="action" value="save_edits">
+    <div class="row g-3">
+      {% for m in matches %}
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6 class="card-title">Match {{ loop.index }}</h6>
+              {% if m.is_bye %}
+                <div class="border rounded p-3 mb-2">
+                  <div class="fw-semibold">{{ m.team1.display_name }}</div>
+                  <div class="text-muted small">{{ m.team1.assigned_team_name }}</div>
+                </div>
+                <div class="text-center text-muted">BYE</div>
+              {% else %}
+                <div class="border rounded p-3 mb-3">
+                  <label class="form-label fw-semibold">Bot A</label>
+                  <select name="team1_{{ m.id }}" class="form-select">
+                    {% for t in all_teams %}
+                      {% if not team_groups or team_groups[t.id] == team_groups.get(m.team1_id) %}
+                        <option value="{{ t.id }}" {% if t.id==m.team1_id %}selected{% endif %}>{{ t.display_name }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="border rounded p-3">
+                  <label class="form-label fw-semibold">Bot B</label>
+                  <select name="team2_{{ m.id }}" class="form-select">
+                    {% for t in all_teams %}
+                      {% if not team_groups or team_groups[t.id] == team_groups.get(m.team2_id) %}
+                        <option value="{{ t.id }}" {% if t.id==m.team2_id %}selected{% endif %}>{{ t.display_name }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </form>
+
+  <div class="d-flex gap-2 mt-3">
+    <!-- Save Changes Form Button -->
+    <button class="btn btn-outline-secondary" type="submit" form="editForm">Save Changes</button>
+    
+    <!-- Re-randomize Separate Form -->
+    <form method="post" action="{{ url_for(request.endpoint, **{'class': current_class}) }}">
+      <input type="hidden" name="action" value="generate">
+      <button class="btn btn-outline-warning" type="submit">Re-randomize</button>
+    </form>
+
+    <!-- Lock Round Separate Form -->
+    <form method="post" action="{{ url_for(request.endpoint, **{'class': current_class}) }}">
+      <input type="hidden" name="action" value="lock">
+      <button class="btn btn-success" type="submit">Lock Round & Enter Results</button>
+    </form>
+  </div>
+
+{% else %}
+  <form method="post" id="results" action="{{ url_for(request.endpoint, **{'class': current_class}) }}#results">
+    <input type="hidden" name="action" value="results">
+    <div class="row g-3">
+      {% for m in matches %}
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6 class="card-title">Match {{ loop.index }}</h6>
+              {% if m.is_bye %}
+                <div class="border rounded p-3 mb-2">
+                  <div class="fw-semibold">{{ m.team1.display_name }}</div>
+                  <div class="text-muted small">{{ m.team1.assigned_team_name }}</div>
+                </div>
+                <div class="text-center text-muted">Advances on BYE</div>
+              {% else %}
+                <div class="d-grid gap-2 mb-3">
+                  <button type="button" class="btn btn-outline-primary winner-toggle top {% if m.winner_id==m.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team1_id }}">
+                    <div>{{ m.team1.name }}</div>
+                  </button>
+                  <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if m.winner_id==m.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team2_id }}">
+                    <div>{{ m.team2.name }}</div>
+                  </button>
+                </div>
+                <input type="hidden" name="winner_{{ m.id }}" id="winner_input_{{ m.id }}" value="{{ m.winner_id or '' }}">
+                <div class="btn-group w-100" role="group" aria-label="Match type selection">
+                  <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='KO' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="KO">KO</button>
+                  <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='JD' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="JD">JD</button>
+                  <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='TO' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="TO">TO</button>
+                </div>
+                <input type="hidden" name="result_type_{{ m.id }}" id="result_type_input_{{ m.id }}" value="{{ m.result_type or '' }}">
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% if not complete %}
+      <button class="btn btn-primary mt-3">Submit Results</button>
+    {% else %}
+      <div class="alert alert-success mt-3">All results in for this round.</div>
+    {% endif %}
+  </form>
+{% endif %}
+{% endblock %}

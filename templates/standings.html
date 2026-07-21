@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}Group Stage Standings{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('index') }}">&larr; Back to dashboard</a></p>
+<h2>Group Stage Standings</h2>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('standings', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+<div class="alert alert-secondary">This page refreshes automatically every 10 seconds to show the latest group-stage standings and tie-breakers.</div>
+
+<table class="table table-hover table-bordered bg-white">
+  <thead class="table-light">
+    <tr>
+      <th class="text-start">Rank</th>
+      <th>Bot</th>
+      <th>Record</th>
+      <th>TO</th>
+      <th>KO</th>
+      <th>JD</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for stat in standings %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td class="fw-semibold">{{ stat.team.display_name }}</td>
+        <td>{{ stat.record }}</td>
+        <td>{{ stat.to }}</td>
+        <td>{{ stat.ko }}</td>
+        <td>{{ stat.jd }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+  setTimeout(function() {
+    window.location.reload();
+  }, 10000);
+</script>
+{% endblock %}

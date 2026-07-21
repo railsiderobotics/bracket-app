@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Bots</h2>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('teams', class=cls) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+<form method="post" class="row g-2 mb-4">
+  <input type="hidden" name="action" value="add">
+  <input type="hidden" name="bot_class" value="{{ current_class }}">
+  <div class="col-md-3">
+    <input type="text" name="bot_name" class="form-control" placeholder="Bot name" required>
+  </div>
+  <div class="col-md-3">
+    <input type="text" name="assigned_team_name" class="form-control" placeholder="Assigned team name" required>
+  </div>
+  <div class="col-md-3">
+    <input type="text" name="pit_table_number" class="form-control" placeholder="Pit table #">
+  </div>
+  <div class="col-12 col-md-auto">
+    <button class="btn btn-primary">Add Bot</button>
+  </div>
+</form>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <form method="post" class="w-100 me-2">
+    <input type="hidden" name="action" value="bulk_add">
+    <input type="hidden" name="bot_class" value="{{ current_class }}">
+    <div class="mb-2">Bulk add format: <code>Bot Name-Team Name, Bot Name-Team Name, ...</code></div>
+    <div class="input-group">
+      <input type="text" name="bulk_bots" class="form-control" placeholder="Example: Bot1-TeamA, Bot2-TeamB">
+      <button class="btn btn-secondary" type="submit">Bulk Add Bots</button>
+    </div>
+  </form>
+  <form method="post" class="m-0">
+    <input type="hidden" name="action" value="clear_all">
+    <input type="hidden" name="bot_class" value="{{ current_class }}">
+    <button class="btn btn-outline-danger">Clear All {{ CLASS_LABELS[current_class] }}</button>
+  </form>
+</div>
+
+<table class="table table-bordered bg-white">
+  <thead><tr><th>Bot Name</th><th>Assigned Team</th><th>Pit Table</th><th>Checked-in</th><th>Waiver</th><th>Registration Fee</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for t in teams %}
+    <tr>
+      <td>
+        <form method="post" class="d-flex gap-2 align-items-center">
+          <input type="hidden" name="action" value="edit">
+          <input type="hidden" name="team_id" value="{{ t.id }}">
+          <input type="hidden" name="bot_class" value="{{ current_class }}">
+          <input type="text" name="bot_name_{{ t.id }}" class="form-control" value="{{ t.name }}" required>
+      </td>
+      <td>
+          <input type="text" name="assigned_team_name_{{ t.id }}" class="form-control" value="{{ t.assigned_team_name }}" required>
+      </td>
+      <td>
+          <input type="text" name="pit_table_number_{{ t.id }}" class="form-control" value="{{ t.pit_table_number or '' }}">
+      </td>
+      <td class="text-center align-middle">
+          <input class="form-check-input" type="checkbox" name="checked_in_{{ t.id }}" id="checked_in_{{ t.id }}" {% if t.checked_in %}checked{% endif %} onchange="this.form.submit()">
+      </td>
+      <td class="text-center align-middle">
+          <input class="form-check-input" type="checkbox" name="safety_waiver_{{ t.id }}" id="safety_waiver_{{ t.id }}" {% if t.safety_waiver %}checked{% endif %} onchange="this.form.submit()">
+      </td>
+      <td class="text-center align-middle">
+          <input class="form-check-input" type="checkbox" name="registration_fee_{{ t.id }}" id="registration_fee_{{ t.id }}" {% if t.registration_fee %}checked{% endif %} onchange="this.form.submit()">
+      </td>
+      <td class="d-flex gap-2 align-items-center">
+          <button class="btn btn-sm btn-outline-primary" type="submit">Update</button>
+        </form>
+        <form method="post" class="m-0">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="team_id" value="{{ t.id }}">
+          <button class="btn btn-sm btn-outline-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
