@@ -126,10 +126,23 @@ with app.app_context():
 
 # ---------- helpers ----------
 
+def get_class_settings():
+    return {s.key: s.enabled for s in TournamentSetting.query.all()}
+
+
+def enabled_classes():
+    settings = get_class_settings()
+    return [cls for cls in BOT_CLASSES if settings.get(cls, True)]
+
+
 def active_teams(bot_class=None):
     query = Team.query.filter_by(dropped=False)
     if bot_class:
         query = query.filter_by(bot_class=bot_class)
+    else:
+        # Restrict strictly to currently enabled classes if no class is explicitly specified
+        enabled = enabled_classes()
+        query = query.filter(Team.bot_class.in_(enabled))
     return query.order_by(Team.name).all()
 
 
@@ -139,6 +152,9 @@ def matches_for(stage, round_num=None, bot_class=None):
         q = q.filter_by(round_num=round_num)
     if bot_class:
         q = q.filter_by(bot_class=bot_class)
+    else:
+        enabled = enabled_classes()
+        q = q.filter(Match.bot_class.in_(enabled))
     return q.order_by(Match.slot_index).all()
 
 
@@ -196,6 +212,8 @@ def stage1_round1_groups(bot_class=None):
     winners, losers = [], []
     for m in matches_for('s1_r1', 1, bot_class=bot_class):
         if m.is_bye:
+            if m.winner_id is not None:
+                winners.append(m.winner_id)
             continue
         if m.winner_id is None:
             continue
@@ -228,9 +246,12 @@ def lock_stage2_prereqs(bot_class=None):
 
 def create_stage1_round2_matches(bot_class):
     Match.query.filter_by(stage='s1_r2', round_num=1, bot_class=bot_class).delete()
+    
+    round1_byes = {m.team1_id for m in matches_for('s1_r1', 1, bot_class=bot_class) if m.is_bye and m.team1_id}
+    
     winners, losers = stage1_round1_groups(bot_class)
     for group in (winners, losers):
-        pairs, bye = random_pairs(group)
+        pairs, bye = random_pairs(group, excluded_bye_ids=round1_byes)
         for i, (a, b) in enumerate(pairs):
             db.session.add(Match(stage='s1_r2', round_num=1, slot_index=i,
                                   team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
@@ -259,7 +280,12 @@ def stage1_stats(bot_class=None):
         }
     for stage in STAGE1_ROUNDS + ['decider']:
         for m in matches_for(stage, bot_class=bot_class):
-            if m.is_bye or m.winner_id is None:
+            if m.winner_id is None:
+                continue
+            if m.is_bye:
+                tid = m.winner_id
+                if tid in stats:
+                    stats[tid]['wins'] += 1
                 continue
             for tid in (m.team1_id, m.team2_id):
                 if tid not in stats:
@@ -303,15 +329,6 @@ def stage1_standings(bot_class=None):
         item['team'].name
     ))
     return two_oh + others
-
-
-def get_class_settings():
-    return {s.key: s.enabled for s in TournamentSetting.query.all()}
-
-
-def enabled_classes():
-    settings = get_class_settings()
-    return [cls for cls in BOT_CLASSES if settings.get(cls, True)]
 
 
 def class_decider_done(bot_class=None):
@@ -404,16 +421,19 @@ def stage2_bracket_data(bot_class=None):
                 else:
                     winners.append(None)
             else:
-                winners.append(m.get('winner'))
+                if m.get('is_bye') and m.get('team1') is not None:
+                    winners.append(m.get('team1').id if hasattr(m.get('team1'), 'id') else m.get('team1'))
+                else:
+                    winners.append(m.get('winner'))
         for i in range(0, len(winners), 2):
             a = winners[i]
             b = winners[i + 1] if i + 1 < len(winners) else None
             placeholders.append({
                 'team1': Team.query.get(a) if a else None,
                 'team2': Team.query.get(b) if b else None,
-                'winner': a if b is None else None,
+                'winner': a if (b is None and a is not None and r == 1) else None,
                 'generated': False,
-                'is_bye': b is None and a is not None,
+                'is_bye': False,
             })
         rounds.append({'round': r, 'matches': placeholders, 'generated': False})
 
@@ -427,24 +447,24 @@ def index():
     if not session.get("authenticated"):
         return redirect(url_for("competitor_dashboard"))
 
-    teams = active_teams()
+    current_class = current_selected_class('3lb')
+    teams = active_teams(current_class)
     two_oh, one_one, oh_two, incomplete = ([], [], [], [])
     enabled = enabled_classes()
-    current_class = current_selected_class('3lb')
-    s1_done = round_complete('s1_r1') and round_complete('s1_r2')
+    s1_done = round_complete('s1_r1', bot_class=current_class) and round_complete('s1_r2', bot_class=current_class)
     if s1_done:
-        two_oh, one_one, oh_two, incomplete = stage1_buckets()
+        two_oh, one_one, oh_two, incomplete = stage1_buckets(current_class)
 
     decider_needed = s1_done and len(one_one) > 0
-    decider_done = round_complete('decider') if round_generated('decider') else (decider_needed is False and s1_done)
+    decider_done = round_complete('decider', bot_class=current_class) if round_generated('decider', bot_class=current_class) else (decider_needed is False and s1_done)
 
-    stage2_started = round_generated('s2', 1)
+    stage2_started = round_generated('s2', 1, bot_class=current_class)
     stage2_ready_class = next((cls for cls in enabled if class_stage2_ready(cls)), None)
 
     return render_template('index.html', teams=teams, s1_done=s1_done,
                            two_oh=two_oh, one_one=one_one, oh_two=oh_two,
                            incomplete=incomplete, decider_needed=decider_needed,
-                           decider_generated=round_generated('decider'),
+                           decider_generated=round_generated('decider', bot_class=current_class),
                            decider_done=decider_done, stage2_started=stage2_started,
                            stage2_ready_class=stage2_ready_class,
                            current_class=current_class)
@@ -1060,7 +1080,7 @@ def reorder_queue():
     return jsonify({'status': 'success'})
 
 
-@app.route('/reset', methods=['POST'])
+@app.reset if False else app.route('/reset', methods=['POST'])
 @login_required
 def reset_tournament():
     Match.query.delete()

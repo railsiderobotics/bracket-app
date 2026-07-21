@@ -4,7 +4,6 @@
 {% block content %}
 <h2>Competitor Dashboard</h2>
 
-<!-- Weight Class Tabs -->
 <ul class="nav nav-tabs mb-4">
   {% for cls in BOT_CLASSES %}
     <li class="nav-item">
@@ -13,10 +12,8 @@
   {% endfor %}
 </ul>
 
-<!-- 1. LIVE QUEUE DISPLAY -->
 <div class="row mb-5">
   <div class="col-12">
-    <!-- CURRENT MATCH IN PROGRESS -->
     <div class="card border-primary mb-4 shadow-sm">
       <div class="card-header bg-primary text-white font-weight-bold">
         <span>🚨 Currently Occurring Match</span>
@@ -34,7 +31,6 @@
       </div>
     </div>
 
-    <!-- UPCOMING QUEUE -->
     <div class="card mb-4">
       <div class="card-header bg-light fw-bold">Upcoming Matches</div>
       <ul class="list-group list-group-flush">
@@ -66,13 +62,12 @@
 
 <hr class="my-4">
 
-<!-- 2. STAGE 2 BRACKET DISPLAY -->
 <div class="row">
   <div class="col-12">
     <h3 class="mb-3">Stage 2 — Bracket View</h3>
 
     <style>
-      .bracket-column { min-width: 240px; display: flex; align-items: center; }
+      .bracket-column { min-width: 260px; display: flex; align-items: center; }
       .bracket-card { background: #f8f9fa; border: 1px solid rgba(0,0,0,.08); min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
       .bracket-match { background: white; border: 1px solid rgba(0,0,0,.08); border-radius: .5rem; padding: .75rem; }
       .bracket-match + .bracket-match { margin-top: .75rem; }
@@ -83,18 +78,32 @@
 
     {% if bracket %}
       <div class="row gx-3 gy-4 align-items-center">
+        {% set match_counter = namespace(value=1) %}
         {% for round in bracket %}
           <div class="col-12 col-md bracket-column">
             <div class="card bracket-card h-100 p-3">
               <div class="fw-bold mb-3">Round {{ round.round }}</div>
               <div class="d-flex flex-column">
                 {% for match in round.matches %}
+                  {% set current_m_num = match_counter.value %}
+                  {% set match_counter.value = match_counter.value + 1 %}
                   <div class="bracket-match">
-                    <div class="team-name">{{ match.team1.name if match.team1 else 'TBD' }}</div>
-                    <div class="vs-tag">vs</div>
-                    <div class="team-name">{{ match.team2.name if match.team2 else 'TBD' }}</div>
-                    {% if round.generated and match.is_bye %}
-                      <div class="mt-2"><span class="badge bg-info badge-advance">BYE</span></div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                      <span class="badge bg-secondary" style="font-size: 0.7rem;">Match #{{ current_m_num }}</span>
+                    </div>
+
+                    <div class="team-name">{{ match.team1.name if match.team1 else ('TBD' if not match.is_bye else '') }}</div>
+                    
+                    {% if match.is_bye %}
+                      <div class="vs-tag fw-bold text-success">vs BYE</div>
+                      <div class="mt-2"><span class="badge bg-info badge-advance">Advances automatically</span></div>
+                    {% else %}
+                      <div class="vs-tag">vs</div>
+                      <div class="team-name">{{ match.team2.name if match.team2 else 'TBD' }}</div>
+                    {% endif %}
+
+                    {% if match.winner %}
+                      <div class="mt-2 text-muted" style="font-size: 0.75rem;">Winner advances to next round slot</div>
                     {% endif %}
                   </div>
                 {% endfor %}

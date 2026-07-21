@@ -32,19 +32,33 @@ def seed_order(n):
     return result
 
 
-def random_pairs(team_ids, rng=None):
+def random_pairs(team_ids, rng=None, excluded_bye_ids=None):
     """
     Randomly pair up a list of team ids.
     Returns (pairs, bye) where pairs is a list of (team_a, team_b) tuples
     and bye is a single team_id that drew a bye this round (or None if
     the count was even).
+    If excluded_bye_ids is provided, those teams will not be assigned the bye.
     """
     rng = rng or random
     ids = list(team_ids)
     rng.shuffle(ids)
     bye = None
+    
     if len(ids) % 2 == 1:
-        bye = ids.pop()
+        excluded_bye_ids = excluded_bye_ids or set()
+        # Try to find a team that hasn't had a bye yet to take the odd bye slot
+        bye_index = -1
+        for i, tid in enumerate(ids):
+            if tid not in excluded_bye_ids:
+                bye_index = i
+                break
+        # Fallback to the last element if everyone in this pool already had a bye
+        if bye_index == -1:
+            bye_index = len(ids) - 1
+            
+        bye = ids.pop(bye_index)
+
     pairs = [(ids[i], ids[i + 1]) for i in range(0, len(ids), 2)]
     return pairs, bye
 
