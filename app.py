@@ -13,7 +13,7 @@ from bracket_logic import random_pairs, build_bracket_slots, round_pairs_from_sl
 
 BASEDIR = os.path.abspath(os.path.dirname(__file__))
 
-# Load environment variables from local .env file
+# Load environment variables from local .env file if present
 load_dotenv(os.path.join(BASEDIR, '.env'))
 
 # Read secrets securely from environment variables
@@ -24,7 +24,13 @@ if not APP_PASSWORD:
     raise RuntimeError("APP_PASSWORD environment variable is missing! Make sure it is defined in your .env file or host environment.")
 
 app = Flask(__name__, static_folder='Image Files')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASEDIR, 'bracket.db')
+
+# Use Neon Postgres in production (Render) or fall back to local SQLite for development
+database_url = os.environ.get("DATABASE_URL")
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or ('sqlite:///' + os.path.join(BASEDIR, 'bracket.db'))
 app.config['SECRET_KEY'] = SECRET_KEY or "dev-key-change-in-production"
 db.init_app(app)
 
@@ -82,30 +88,34 @@ def logout():
 
 with app.app_context():
     db.create_all()
-    insp = inspect(db.engine)
-    team_columns = [c['name'] for c in insp.get_columns('team')]
-    if 'assigned_team_name' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN assigned_team_name VARCHAR(80) DEFAULT ""'))
-    if 'bot_class' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
-    if 'checked_in' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN checked_in BOOLEAN DEFAULT 0'))
-    if 'safety_waiver' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN safety_waiver BOOLEAN DEFAULT 0'))
-    if 'registration_fee' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT 0'))
-    if 'pit_table_number' not in team_columns:
-        db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
+    try:
+        insp = inspect(db.engine)
+        team_columns = [c['name'] for c in insp.get_columns('team')]
+        if 'assigned_team_name' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN assigned_team_name VARCHAR(80) DEFAULT ""'))
+        if 'bot_class' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
+        if 'checked_in' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN checked_in BOOLEAN DEFAULT 0'))
+        if 'safety_waiver' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN safety_waiver BOOLEAN DEFAULT 0'))
+        if 'registration_fee' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT 0'))
+        if 'pit_table_number' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
 
-    match_columns = [c['name'] for c in insp.get_columns('match')]
-    if 'bot_class' not in match_columns:
-        db.session.execute(text('ALTER TABLE match ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
-    if 'result_type' not in match_columns:
-        db.session.execute(text('ALTER TABLE match ADD COLUMN result_type VARCHAR(10)'))
-    if 'queue_status' not in match_columns:
-        db.session.execute(text('ALTER TABLE match ADD COLUMN queue_status VARCHAR(20) DEFAULT "queued"'))
-    if 'queue_order' not in match_columns:
-        db.session.execute(text('ALTER TABLE match ADD COLUMN queue_order INTEGER DEFAULT 0'))
+        match_columns = [c['name'] for c in insp.get_columns('match')]
+        if 'bot_class' not in match_columns:
+            db.session.execute(text('ALTER TABLE match ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
+        if 'result_type' not in match_columns:
+            db.session.execute(text('ALTER TABLE match ADD COLUMN result_type VARCHAR(10)'))
+        if 'queue_status' not in match_columns:
+            db.session.execute(text('ALTER TABLE match ADD COLUMN queue_status VARCHAR(20) DEFAULT "queued"'))
+        if 'queue_order' not in match_columns:
+            db.session.execute(text('ALTER TABLE match ADD COLUMN queue_order INTEGER DEFAULT 0'))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
 
     existing_settings = {row.key for row in TournamentSetting.query.all()}
     for cls in BOT_CLASSES:
@@ -482,7 +492,6 @@ def competitor_results():
     all_matches = Match.query.filter_by(bot_class=current_class)\
                              .order_by(Match.stage, Match.round_num, Match.slot_index).all()
 
-    # Calculate maximum round generated in Stage 2 to identify finals
     s2_max_round = db.session.query(db.func.max(Match.round_num))\
                             .filter_by(bot_class=current_class, stage='s2').scalar() or 1
 
@@ -495,7 +504,6 @@ def competitor_results():
         elif m.stage == 'decider':
             label = STAGE_LABELS['decider']
         elif m.stage == 's2':
-            # Check if this stage 2 round is the final match (only 1 slot/match or max round)
             round_matches_count = Match.query.filter_by(bot_class=current_class, stage='s2', round_num=m.round_num).count()
             if round_matches_count == 1 or m.round_num == s2_max_round:
                 label = "Stage 2 — Finals Match"
