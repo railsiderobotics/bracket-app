@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
 
 db = SQLAlchemy()
 
@@ -12,7 +13,11 @@ class Team(db.Model):
     safety_waiver = db.Column(db.Boolean, default=False)
     registration_fee = db.Column(db.Boolean, default=False)
     pit_table_number = db.Column(db.String(20), nullable=True)
-    dropped = db.Column(db.Boolean, default=False)  # unused for bot flow
+    dropped = db.Column(db.Boolean, default=False)
+    
+    # 20-Minute Rest Timer Fields
+    last_match_end_time = db.Column(db.DateTime, nullable=True)
+    extension_used = db.Column(db.Boolean, default=False)
 
     @property
     def display_name(self):
@@ -28,21 +33,21 @@ class Match(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     stage = db.Column(db.String(20), nullable=False)
-    round_num = db.Column(db.Integer, default=1)   # meaningful for stage='s2' (round 1, 2, 3...)
-    slot_index = db.Column(db.Integer, default=0)  # position within the round, used for bracket progression
+    round_num = db.Column(db.Integer, default=1)
+    slot_index = db.Column(db.Integer, default=0)
     bot_class = db.Column(db.String(20), nullable=False, default='3lb')
 
     team1_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=True)
-    team2_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=True)  # null = opponent is a BYE
+    team2_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=True)
     winner_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=True)
     is_bye = db.Column(db.Boolean, default=False)
 
-    locked = db.Column(db.Boolean, default=False)  # pairings finalized, ready for results
+    locked = db.Column(db.Boolean, default=False)
     result_type = db.Column(db.String(10), nullable=True)
 
     # Queue Management Fields
-    queue_status = db.Column(db.String(20), default='queued')  # 'queued', 'in_progress', 'awaiting_results', 'completed'
-    queue_order = db.Column(db.Integer, default=0)              # Controls drag-and-drop position
+    queue_status = db.Column(db.String(20), default='queued')
+    queue_order = db.Column(db.Integer, default=0)
 
     team1 = db.relationship('Team', foreign_keys=[team1_id])
     team2 = db.relationship('Team', foreign_keys=[team2_id])

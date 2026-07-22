@@ -76,12 +76,14 @@
       <a class="navbar-brand" href="{{ url_for('index') }}">
         <img src="{{ url_for('static', filename='Horizontal Railside Rumble.png') }}" alt="Bracket Control Logo" class="d-inline-block align-text-top" style="height:3rem;">
       </a>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-items-center flex-wrap">
         {% if is_authenticated %}
           <a class="btn btn-outline-primary btn-sm fw-bold" href="{{ url_for('index') }}">Admin Dashboard</a>
           <a class="btn btn-outline-primary btn-sm fw-bold" href="{{ url_for('queue') }}">📋 Match Queue</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('teams') }}">Manage Bots</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('standings') }}">Group Standings</a>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('competitor_results') }}">Match Results</a>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('admin_timers') }}">⏱️ Repair Manager</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('settings') }}" title="Global Tournament Settings">⚙️ Settings</a>
           <form action="{{ url_for('reset_tournament') }}" method="post" class="m-0">
             <button type="submit" class="btn btn-outline-danger btn-sm">Reset Tournament</button>
@@ -91,6 +93,7 @@
           <a class="btn btn-outline-primary btn-sm fw-bold" href="{{ url_for('competitor_dashboard') }}">Competitor Dashboard</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('competitor_results') }}">Match Results</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('standings') }}">Group Standings</a>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('competitor_timers') }}">Repair Timers</a>
           <a class="btn btn-primary btn-sm" href="{{ url_for('login') }}">Login</a>
         {% endif %}
       </div>

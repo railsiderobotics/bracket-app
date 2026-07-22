@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block title %}Competitor Repair Timers{% endblock %}
+
+{% block content %}
+<h2>Competitor Repair Timers</h2>
+<p class="text-muted">Tracks the mandatory 20-minute repair window between matches. <strong>Timers begin immediately when your match result is submitted and saved.</strong></p>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('competitor_timers', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+<div class="row g-3">
+  {% for item in timer_data %}
+    <div class="col-md-4">
+      <div class="card shadow-sm h-100 {% if item.is_ready %}border-success{% else %}border-warning{% endif %}">
+        <div class="card-body text-center">
+          <h5 class="card-title fw-bold">{{ item.team.name }}</h5>
+          <p class="text-muted small mb-2">{{ item.team.assigned_team_name }}</p>
+          
+          {% if item.is_ready %}
+            <span class="badge bg-success fs-6 px-3 py-2">Ready to Fight ✓</span>
+          {% else %}
+            <span class="badge bg-warning text-dark fs-6 px-3 py-2 mb-2">Repairing</span>
+            <div class="fs-5 fw-bold text-danger countdown-timer" data-seconds="{{ item.remaining_seconds }}">
+              {{ item.remaining_seconds // 60 }}m {{ item.remaining_seconds % 60 }}s remaining
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="col-12"><p class="text-muted">No active bots found for this class.</p></div>
+  {% endfor %}
+</ul>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const timers = document.querySelectorAll('.countdown-timer');
+    timers.forEach(el => {
+      let totalSeconds = parseInt(el.dataset.seconds);
+      const interval = setInterval(() => {
+        if (totalSeconds <= 0) {
+          clearInterval(interval);
+          location.reload();
+          return;
+        }
+        totalSeconds--;
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        el.textContent = `${mins}m ${secs < 10 ? '0' : ''}${secs}s remaining`;
+      }, 1000);
+    });
+  });
+
+  setTimeout(() => { location.reload(); }, 30000);
+</script>
+{% endblock %}

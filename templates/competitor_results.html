@@ -3,6 +3,7 @@
 
 {% block content %}
 <h2>Match Results</h2>
+<p class="text-muted">This page refreshes automatically every 10 seconds to show the latest match outcomes.</p>
 
 <!-- Weight Class Tabs -->
 <ul class="nav nav-tabs mb-4">
@@ -72,4 +73,10 @@
     </div>
   {% endfor %}
 {% endif %}
+
+<script>
+  setTimeout(function() {
+    window.location.reload();
+  }, 10000);
+</script>
 {% endblock %}

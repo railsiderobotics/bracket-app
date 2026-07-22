@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% block title %}Admin Repair Timers Manager{% endblock %}
+
+{% block content %}
+<h2>Admin Repair Timers Manager</h2>
+<p class="text-muted">Manage 20-minute repair periods. <strong>Timers automatically start the exact moment a match result is submitted and saved</strong> for a team.</p>
+
+<ul class="nav nav-tabs mb-4">
+  {% for cls in BOT_CLASSES %}
+    <li class="nav-item">
+      <a class="nav-link {% if cls == current_class %}active{% endif %}" href="{{ url_for('admin_timers', **{'class': cls}) }}">{{ CLASS_LABELS[cls] }}</a>
+    </li>
+  {% endfor %}
+</ul>
+
+<table class="table table-bordered bg-white shadow-sm">
+  <thead>
+    <tr>
+      <th>Bot Name</th>
+      <th>Team</th>
+      <th>Repair Status</th>
+      <th>Extension Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in timer_data %}
+      <tr>
+        <td class="fw-semibold">{{ item.team.name }}</td>
+        <td>{{ item.team.assigned_team_name }}</td>
+        <td>
+          {% if item.is_ready %}
+            <span class="badge bg-success">Ready</span>
+          {% else %}
+            <span class="badge bg-warning text-dark">Repairing (<span class="countdown-timer" data-seconds="{{ item.remaining_seconds }}">{{ item.remaining_seconds // 60 }}m {{ item.remaining_seconds % 60 }}s</span>)</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if item.team.extension_used %}
+            <span class="badge bg-secondary">Extension Used (20m)</span>
+          {% else %}
+            <span class="badge bg-outline-primary text-primary border">Available</span>
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" class="d-inline">
+            <input type="hidden" name="team_id" value="{{ item.team.id }}">
+            {% if not item.team.extension_used %}
+              <button type="submit" name="action" value="grant_extension" class="btn btn-sm btn-outline-warning">Grant +20m Extension</button>
+            {% else %}
+              <button type="submit" name="action" value="reset_extension" class="btn btn-sm btn-outline-secondary">Reset Extension</button>
+            {% endif %}
+            <button type="submit" name="action" value="reset_timer" class="btn btn-sm btn-outline-danger">Clear Timer</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const timers = document.querySelectorAll('.countdown-timer');
+    timers.forEach(el => {
+      let totalSeconds = parseInt(el.dataset.seconds);
+      const interval = setInterval(() => {
+        if (totalSeconds <= 0) {
+          clearInterval(interval);
+          location.reload();
+          return;
+        }
+        totalSeconds--;
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        el.textContent = `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+      }, 1000);
+    });
+  });
+
+  // Auto refresh page every 30 seconds to stay synchronized with the backend
+  setTimeout(() => { location.reload(); }, 30000);
+</script>
+{% endblock %}

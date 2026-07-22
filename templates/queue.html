@@ -59,7 +59,8 @@
 <div class="card mb-4">
   <div class="card-header bg-light fw-bold">Upcoming Queue (Drag to Reorder)</div>
   <ul class="list-group list-group-flush" id="queueList">
-    {% for m in queued_matches %}
+    {% for item in queued_matches %}
+      {% set m = item.match %}
       <li class="list-group-item d-flex justify-content-between align-items-center" data-id="{{ m.id }}" style="cursor: grab;">
         <div>
           <!-- Dynamic Badges -->
@@ -71,6 +72,13 @@
             <span class="badge bg-info text-dark me-2">IN THE HOLE</span>
           {% else %}
             <span class="badge bg-light text-dark border me-2">#{{ loop.index }}</span>
+          {% endif %}
+
+          <!-- Rest Check Indicator -->
+          {% if item.both_rested %}
+            <span class="badge bg-success me-1" title="Both competitors have rested 20+ minutes">✓ Rested</span>
+          {% else %}
+            <span class="badge bg-danger me-1" title="Competitors are still within their 20-minute rest window">✗ Resting</span>
           {% endif %}
 
           <strong>{{ m.team1.name }}</strong> <span class="badge bg-outline-secondary text-dark border">Pit {{ m.team1.pit_table_number or 'N/A' }}</span>
@@ -106,7 +114,6 @@
           <strong>{{ m.team2.name }}</strong> (Pit: {{ m.team2.pit_table_number or 'N/A' }})
         </div>
         <div class="d-flex gap-2">
-          <!-- Dynamic URL depending on match stage -->
           {% if m.stage == 's1_r1' %}
             <a class="btn btn-outline-dark btn-sm" href="{{ url_for('s1_r1', **{'class': current_class}) }}#results">Enter Winner</a>
           {% elif m.stage == 's1_r2' %}
@@ -154,7 +161,6 @@
   </ul>
 </div>
 
-<!-- Drag-and-Drop JavaScript (SortableJS) -->
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
   const el = document.getElementById('queueList');

@@ -1,6 +1,7 @@
 import math
 import os
 import random
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from sqlalchemy import inspect, or_, text
@@ -13,10 +14,8 @@ from bracket_logic import random_pairs, build_bracket_slots, round_pairs_from_sl
 
 BASEDIR = os.path.abspath(os.path.dirname(__file__))
 
-# Load environment variables from local .env file if present
 load_dotenv(os.path.join(BASEDIR, '.env'))
 
-# Read secrets securely from environment variables
 SECRET_KEY = os.environ.get("SECRET_KEY")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
@@ -25,7 +24,6 @@ if not APP_PASSWORD:
 
 app = Flask(__name__, static_folder='Image Files')
 
-# Use Neon Postgres in production (Render) or fall back to local SQLite for development
 database_url = os.environ.get("DATABASE_URL")
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -39,6 +37,8 @@ STAGE_LABELS = {
     's1_r1': 'Stage 1 – Round 1',
     's1_r2': 'Stage 1 – Round 2',
     'decider': 'Decider Round (1-1 bots)',
+    's2': 'Stage 2 – Single Elimination',
+    's2_placement': 'Bronze Placement Match'
 }
 BOT_CLASSES = ['3lb', '1lb', '1lb_plant']
 CLASS_LABELS = {
@@ -103,6 +103,10 @@ with app.app_context():
             db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT 0'))
         if 'pit_table_number' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
+        if 'last_match_end_time' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN last_match_end_time DATETIME'))
+        if 'extension_used' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN extension_used BOOLEAN DEFAULT 0'))
 
         match_columns = [c['name'] for c in insp.get_columns('match')]
         if 'bot_class' not in match_columns:
@@ -243,6 +247,22 @@ def lock_stage2_prereqs(bot_class=None):
     db.session.commit()
 
 
+def create_round_matches(stage, team_ids, round_num=1, bot_class='3lb', rng=None):
+    Match.query.filter_by(stage=stage, round_num=round_num, bot_class=bot_class).delete()
+    shuffled_ids = list(team_ids)
+    random.shuffle(shuffled_ids)
+    
+    pairs, bye = random_pairs(shuffled_ids, rng=rng)
+    for i, (a, b) in enumerate(pairs):
+        db.session.add(Match(stage=stage, round_num=round_num, slot_index=i,
+                              team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
+    if bye is not None:
+        db.session.add(Match(stage=stage, round_num=round_num, slot_index=len(pairs),
+                              team1_id=bye, team2_id=None, bot_class=bot_class, is_bye=True,
+                              winner_id=bye, locked=True))
+    db.session.commit()
+
+
 def create_stage1_round2_matches(bot_class):
     Match.query.filter_by(stage='s1_r2', round_num=1, bot_class=bot_class).delete()
     
@@ -365,22 +385,6 @@ def current_selected_class(default='3lb'):
     return enabled[0] if enabled else default
 
 
-def create_round_matches(stage, team_ids, round_num=1, bot_class='3lb', rng=None):
-    Match.query.filter_by(stage=stage, round_num=round_num, bot_class=bot_class).delete()
-    shuffled_ids = list(team_ids)
-    random.shuffle(shuffled_ids)
-    
-    pairs, bye = random_pairs(shuffled_ids, rng=rng)
-    for i, (a, b) in enumerate(pairs):
-        db.session.add(Match(stage=stage, round_num=round_num, slot_index=i,
-                              team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
-    if bye is not None:
-        db.session.add(Match(stage=stage, round_num=round_num, slot_index=len(pairs),
-                              team1_id=bye, team2_id=None, bot_class=bot_class, is_bye=True,
-                              winner_id=bye, locked=True))
-    db.session.commit()
-
-
 def stage2_bracket_data(bot_class=None):
     round1 = matches_for('s2', 1, bot_class=bot_class)
     if not round1:
@@ -439,6 +443,18 @@ def stage2_bracket_data(bot_class=None):
     return rounds
 
 
+def check_rest_status(team):
+    """Returns (is_ready, remaining_seconds) for a 20-minute rest window."""
+    if not team or not team.last_match_end_time:
+        return True, 0
+    elapsed = datetime.utcnow() - team.last_match_end_time
+    required_rest = timedelta(minutes=20)
+    if elapsed >= required_rest:
+        return True, 0
+    remaining = required_rest - elapsed
+    return False, int(remaining.total_seconds())
+
+
 # ---------- dashboard & competitor routes ----------
 
 @app.route('/')
@@ -448,8 +464,6 @@ def index():
 
     enabled = enabled_classes()
     current_class = current_selected_class('3lb')
-    
-    # Compute active counts per enabled class and total across all enabled classes
     class_counts = {cls: len(active_teams(cls)) for cls in enabled}
     total_active_count = sum(class_counts.values())
 
@@ -509,41 +523,34 @@ def competitor_dashboard():
                            CLASS_LABELS=CLASS_LABELS)
 
 
-@app.route('/results')
+@app.route('/standings')
+def standings():
+    current_class = request.args.get('class', '3lb')
+    enabled = enabled_classes()
+    if current_class not in enabled:
+        current_class = enabled[0] if enabled else '3lb'
+    
+    st = stage1_standings(current_class)
+    return render_template('standings.html',
+                           standings=st,
+                           current_class=current_class,
+                           BOT_CLASSES=enabled,
+                           CLASS_LABELS=CLASS_LABELS)
+
+
+@app.route('/competitor_results')
 def competitor_results():
     current_class = request.args.get('class', '3lb')
     enabled = enabled_classes()
     if current_class not in enabled:
         current_class = enabled[0] if enabled else '3lb'
 
-    all_matches = Match.query.filter_by(bot_class=current_class)\
-                             .order_by(Match.stage, Match.round_num, Match.slot_index).all()
-
-    s2_max_round = db.session.query(db.func.max(Match.round_num))\
-                            .filter_by(bot_class=current_class, stage='s2').scalar() or 1
-
+    stages = STAGE1_ROUNDS + ['decider', 's2', 's2_placement']
     grouped_matches = {}
-    for m in all_matches:
-        if m.stage == 's1_r1':
-            label = STAGE_LABELS['s1_r1']
-        elif m.stage == 's1_r2':
-            label = STAGE_LABELS['s1_r2']
-        elif m.stage == 'decider':
-            label = STAGE_LABELS['decider']
-        elif m.stage == 's2':
-            round_matches_count = Match.query.filter_by(bot_class=current_class, stage='s2', round_num=m.round_num).count()
-            if round_matches_count == 1 or m.round_num == s2_max_round:
-                label = "Stage 2 — Finals Match"
-            else:
-                label = f"Stage 2 — Round {m.round_num}"
-        elif m.stage == 's2_placement':
-            label = "Stage 2 — Bronze Placement Match"
-        else:
-            label = m.stage
-
-        if label not in grouped_matches:
-            grouped_matches[label] = []
-        grouped_matches[label].append(m)
+    for stg in stages:
+        ms = Match.query.filter_by(stage=stg, bot_class=current_class).order_by(Match.round_num, Match.slot_index).all()
+        if ms:
+            grouped_matches[STAGE_LABELS.get(stg, stg)] = ms
 
     return render_template('competitor_results.html',
                            grouped_matches=grouped_matches,
@@ -552,15 +559,132 @@ def competitor_results():
                            CLASS_LABELS=CLASS_LABELS)
 
 
-@app.route('/standings')
-def standings():
+@app.route('/timers')
+def competitor_timers():
     current_class = request.args.get('class', '3lb')
-    if current_class not in enabled_classes():
-        current_class = enabled_classes()[0] if enabled_classes() else '3lb'
-    standings = stage1_standings(current_class)
-    return render_template('standings.html', standings=standings,
+    enabled = enabled_classes()
+    if current_class not in enabled:
+        current_class = enabled[0] if enabled else '3lb'
+    
+    teams = Team.query.filter_by(bot_class=current_class, dropped=False).order_by(Team.name).all()
+    
+    # 1. Identify 0-2 or 1-2 eliminated teams from Stage 1 / Decider
+    s1_done = round_complete('s1_r1', bot_class=current_class) and round_complete('s1_r2', bot_class=current_class)
+    eliminated_stage1_ids = set()
+    if s1_done:
+        _, _, oh_two, _ = stage1_buckets(current_class)
+        for t in oh_two:
+            eliminated_stage1_ids.add(t.id)
+            
+    # Check decider round losses (teams that went 1-2)
+    if round_generated('decider', 1, current_class):
+        for m in matches_for('decider', 1, bot_class=current_class):
+            if m.winner_id is not None:
+                loser_id = m.team1_id if m.winner_id == m.team2_id else m.team2_id
+                if loser_id:
+                    eliminated_stage1_ids.add(loser_id)
+
+    # 2. Identify Top 4 teams (Champion, 2nd, 3rd, 4th)
+    bracket = stage2_bracket_data(current_class)
+    placement_match = stage2_placement_match(current_class)
+    
+    top_four_ids = set()
+    if bracket and len(bracket) > 0:
+        last = bracket[-1]
+        if last.get('matches'):
+            final_match = last['matches'][0]
+            if isinstance(final_match, Match):
+                if final_match.team1_id: top_four_ids.add(final_match.team1_id)
+                if final_match.team2_id: top_four_ids.add(final_match.team2_id)
+            elif isinstance(final_match, dict):
+                if final_match.get('team1'): top_four_ids.add(final_match['team1'].id if hasattr(final_match['team1'], 'id') else final_match['team1'])
+                if final_match.get('team2'): top_four_ids.add(final_match['team2'].id if hasattr(final_match['team2'], 'id') else final_match['team2'])
+    if placement_match:
+        if placement_match.team1_id: top_four_ids.add(placement_match.team1_id)
+        if placement_match.team2_id: top_four_ids.add(placement_match.team2_id)
+
+    # 3. Identify teams currently eliminated from Stage 2 bracket rounds
+    bracket_eliminated_ids = set()
+    r = 1
+    while round_generated('s2', r, current_class):
+        round_matches = matches_for('s2', r, bot_class=current_class)
+        for m in round_matches:
+            if m.winner_id is not None and not m.is_bye:
+                loser_id = m.team1_id if m.winner_id == m.team2_id else m.team2_id
+                if loser_id and loser_id not in top_four_ids:
+                    bracket_eliminated_ids.add(loser_id)
+        r += 1
+
+    timer_data = []
+    for t in teams:
+        # Exclude 0-2 / 1-2 Stage 1 eliminations unless they somehow reached top 4
+        if t.id in eliminated_stage1_ids and t.id not in top_four_ids:
+            continue
+            
+        # Exclude teams knocked out of the Stage 2 bracket
+        if t.id in bracket_eliminated_ids and t.id not in top_four_ids:
+            continue
+
+        is_ready, rem_secs = check_rest_status(t)
+        timer_data.append({
+            'team': t,
+            'is_ready': is_ready,
+            'remaining_seconds': rem_secs
+        })
+
+    return render_template('competitor_timers.html',
+                           timer_data=timer_data,
                            current_class=current_class,
-                           BOT_CLASSES=enabled_classes(),
+                           BOT_CLASSES=enabled,
+                           CLASS_LABELS=CLASS_LABELS)
+
+
+@app.route('/admin/timers', methods=['GET', 'POST'])
+@login_required
+def admin_timers():
+    current_class = request.args.get('class', '3lb')
+    enabled = enabled_classes()
+    if current_class not in enabled:
+        current_class = enabled[0] if enabled else '3lb'
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        team_id = request.form.get('team_id')
+        t = Team.query.get(team_id) if team_id else None
+
+        if t:
+            if action == 'grant_extension' and not t.extension_used:
+                if t.last_match_end_time:
+                    t.last_match_end_time += timedelta(minutes=20)
+                else:
+                    t.last_match_end_time = datetime.utcnow() - timedelta(minutes=20) + timedelta(minutes=20)
+                t.extension_used = True
+                db.session.commit()
+                flash(f'Granted 20-minute extension to {t.name}.', 'info')
+            elif action == 'reset_extension':
+                t.extension_used = False
+                db.session.commit()
+                flash(f'Reset extension status for {t.name}.', 'info')
+            elif action == 'reset_timer':
+                t.last_match_end_time = None
+                db.session.commit()
+                flash(f'Reset repair timer for {t.name}.', 'info')
+        return redirect(url_for('admin_timers', **{'class': current_class}))
+
+    teams = Team.query.filter_by(bot_class=current_class, dropped=False).order_by(Team.name).all()
+    timer_data = []
+    for t in teams:
+        is_ready, rem_secs = check_rest_status(t)
+        timer_data.append({
+            'team': t,
+            'is_ready': is_ready,
+            'remaining_seconds': rem_secs
+        })
+
+    return render_template('admin_timers.html',
+                           timer_data=timer_data,
+                           current_class=current_class,
+                           BOT_CLASSES=enabled,
                            CLASS_LABELS=CLASS_LABELS)
 
 
@@ -743,7 +867,14 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
                     continue
                 w = request.form.get(f'winner_{m.id}')
                 if w:
-                    m.winner_id = int(w)
+                    new_winner_id = int(w)
+                    if m.winner_id != new_winner_id:
+                        now = datetime.utcnow()
+                        if m.team1_id:
+                            Team.query.get(m.team1_id).last_match_end_time = now
+                        if m.team2_id:
+                            Team.query.get(m.team2_id).last_match_end_time = now
+                    m.winner_id = new_winner_id
                 m.result_type = request.form.get(f'result_type_{m.id}') or None
             db.session.commit()
             return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
@@ -902,7 +1033,14 @@ def stage2(round_num):
                     continue
                 w = request.form.get(f'winner_{m.id}')
                 if w:
-                    m.winner_id = int(w)
+                    new_winner_id = int(w)
+                    if m.winner_id != new_winner_id:
+                        now = datetime.utcnow()
+                        if m.team1_id:
+                            Team.query.get(m.team1_id).last_match_end_time = now
+                        if m.team2_id:
+                            Team.query.get(m.team2_id).last_match_end_time = now
+                    m.winner_id = new_winner_id
                 m.result_type = None
             if len(save_matches) == 1 and all(m.winner_id for m in save_matches):
                 for m in save_matches:
@@ -1055,9 +1193,17 @@ def queue():
         return redirect(url_for('queue', **{'class': current_class}))
 
     in_progress = Match.query.filter_by(bot_class=current_class, queue_status='in_progress').first()
+    queued_raw = Match.query.filter_by(bot_class=current_class, queue_status='queued', winner_id=None)\
+                            .order_by(Match.queue_order.asc()).all()
 
-    queued_matches = Match.query.filter_by(bot_class=current_class, queue_status='queued', winner_id=None)\
-                               .order_by(Match.queue_order.asc()).all()
+    queued_matches = []
+    for m in queued_raw:
+        t1_ready = check_rest_status(m.team1)[0] if m.team1 else True
+        t2_ready = check_rest_status(m.team2)[0] if m.team2 else True
+        queued_matches.append({
+            'match': m,
+            'both_rested': t1_ready and t2_ready
+        })
 
     awaiting_results = Match.query.filter_by(bot_class=current_class, queue_status='awaiting_results', winner_id=None)\
                                    .order_by(Match.id.desc()).all()
@@ -1091,8 +1237,12 @@ def reorder_queue():
 @login_required
 def reset_tournament():
     Match.query.delete()
+    Team.query.update({
+        Team.last_match_end_time: None,
+        Team.extension_used: False
+    })
     db.session.commit()
-    flash('Tournament has been reset. All match pairings and results have been cleared.', 'info')
+    flash('Tournament has been reset. All match pairings, results, and repair timers have been cleared.', 'info')
     return redirect(url_for('index'))
 
 
