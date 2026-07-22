@@ -140,7 +140,6 @@ def active_teams(bot_class=None):
     if bot_class:
         query = query.filter_by(bot_class=bot_class)
     else:
-        # Restrict strictly to currently enabled classes if no class is explicitly specified
         enabled = enabled_classes()
         query = query.filter(Team.bot_class.in_(enabled))
     return query.order_by(Team.name).all()
@@ -447,10 +446,15 @@ def index():
     if not session.get("authenticated"):
         return redirect(url_for("competitor_dashboard"))
 
+    enabled = enabled_classes()
     current_class = current_selected_class('3lb')
+    
+    # Compute active counts per enabled class and total across all enabled classes
+    class_counts = {cls: len(active_teams(cls)) for cls in enabled}
+    total_active_count = sum(class_counts.values())
+
     teams = active_teams(current_class)
     two_oh, one_one, oh_two, incomplete = ([], [], [], [])
-    enabled = enabled_classes()
     s1_done = round_complete('s1_r1', bot_class=current_class) and round_complete('s1_r2', bot_class=current_class)
     if s1_done:
         two_oh, one_one, oh_two, incomplete = stage1_buckets(current_class)
@@ -467,7 +471,10 @@ def index():
                            decider_generated=round_generated('decider', bot_class=current_class),
                            decider_done=decider_done, stage2_started=stage2_started,
                            stage2_ready_class=stage2_ready_class,
-                           current_class=current_class)
+                           current_class=current_class,
+                           total_active_count=total_active_count,
+                           class_counts=class_counts,
+                           CLASS_LABELS=CLASS_LABELS)
 
 
 @app.route('/competitor')

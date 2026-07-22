@@ -39,42 +39,76 @@
   {% endif %}
 
   <style>
-    .bracket-column { min-width: 260px; display: flex; align-items: center; }
-    .bracket-card { background: #f8f9fa; border: 1px solid rgba(0,0,0,.08); min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    .bracket-column { min-width: 260px; display: flex; align-items: stretch; }
+    .bracket-card { background: #f8f9fa; border: 1px solid rgba(0,0,0,.08); min-height: 100%; display: flex; flex-direction: column; justify-content: flex-start; }
     .bracket-match { background: white; border: 1px solid rgba(0,0,0,.08); border-radius: .5rem; padding: .75rem; }
     .bracket-match + .bracket-match { margin-top: .75rem; }
     .bracket-match .team-name { font-weight: 600; }
-    .bracket-match .vs-tag { color: #6c757d; font-size: .9rem; margin: .5rem 0; }
+    .bracket-match .vs-tag { color: #6c757d; font-size: .9rem; margin: .25rem 0; }
     .bracket-match .badge-advance { font-size: .75rem; }
   </style>
 
-  <div class="row gx-3 gy-4 align-items-center">
+  <div class="row gx-3 gy-4 align-items-stretch flex-nowrap overflow-auto pb-3">
     {% set match_counter = namespace(value=1) %}
+    
+    {% set match_num_map = {} %}
+    {% set calc_counter = namespace(value=1) %}
+    {% for r_item in bracket %}
+      {% for m_item in r_item.matches %}
+        {% set _ = match_num_map.update({(r_item.round, loop.index0): calc_counter.value}) %}
+        {% set calc_counter.value = calc_counter.value + 1 %}
+      {% endfor %}
+    {% endfor %}
+
     {% for round in bracket %}
-      <div class="col-12 col-md bracket-column">
-        <div class="card bracket-card h-100 p-3">
+      <div class="col-auto bracket-column">
+        <div class="card bracket-card h-100 p-3 shadow-sm">
           <div class="fw-bold mb-3">Round {{ round.round }}</div>
-          <div class="d-flex flex-column">
+          <div class="d-flex flex-column justify-content-around h-100">
             {% for match in round.matches %}
               {% set current_m_num = match_counter.value %}
               {% set match_counter.value = match_counter.value + 1 %}
-              <div class="bracket-match">
+              <div class="bracket-match my-1">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                   <span class="badge bg-secondary" style="font-size: 0.7rem;">Match #{{ current_m_num }}</span>
                 </div>
                 
-                <div class="team-name">{{ match.team1.name if match.team1 else ('TBD' if not match.is_bye else '') }}</div>
+                <div class="team-name">
+                  {% if match.team1 %}
+                    {{ match.team1.name }}
+                  {% elif match.is_bye %}
+                    
+                  {% else %}
+                    {% if round.round > 1 %}
+                      {% set prev_match_idx = (loop.index0 * 2) %}
+                      Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                    {% else %}
+                      TBD
+                    {% endif %}
+                  {% endif %}
+                </div>
                 
                 {% if match.is_bye %}
                   <div class="vs-tag fw-bold text-success">vs BYE</div>
                   <div class="mt-2"><span class="badge bg-info badge-advance">Advances automatically</span></div>
                 {% else %}
                   <div class="vs-tag">vs</div>
-                  <div class="team-name">{{ match.team2.name if match.team2 else 'TBD' }}</div>
+                  <div class="team-name">
+                    {% if match.team2 %}
+                      {{ match.team2.name }}
+                    {% else %}
+                      {% if round.round > 1 %}
+                        {% set prev_match_idx = (loop.index0 * 2) + 1 %}
+                        Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                      {% else %}
+                        TBD
+                      {% endif %}
+                    {% endif %}
+                  </div>
                 {% endif %}
 
                 {% if match.winner %}
-                  <div class="mt-2 text-muted" style="font-size: 0.75rem;">Winner advances to next round spot</div>
+                  <div class="mt-2 text-muted" style="font-size: 0.75rem;">Winner advances to next round slot</div>
                 {% endif %}
               </div>
             {% endfor %}
@@ -89,7 +123,7 @@
   {% endif %}
 
   {% if placement_match %}
-    <div class="card mt-4 p-3">
+    <div class="card mt-4 p-3 shadow-sm">
       <h5>Bronze Placement Match</h5>
       <div class="row g-3 mt-1">
         <div class="col-md-6">

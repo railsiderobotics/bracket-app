@@ -1,7 +1,14 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Tournament Dashboard</h2>
-<p class="text-muted">{{ teams|length }} active bots.</p>
+<p class="text-muted">
+  <strong>{{ total_active_count }}</strong> active bot(s) total across enabled classes:
+  {% for cls, count in class_counts.items() %}
+    {% if count > 0 %}
+      <span class="badge bg-secondary ms-1">{{ count }} {{ CLASS_LABELS[cls] }}</span>
+    {% endif %}
+  {% endfor %}
+</p>
 
 <div class="row g-3 mb-4">
   <div class="col-md-6">
