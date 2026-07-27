@@ -1,9 +1,13 @@
 import math
 import os
 import random
+import hmac
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_caching import Cache
 from sqlalchemy import inspect, or_, text
 from dotenv import load_dotenv
 
@@ -19,17 +23,34 @@ load_dotenv(os.path.join(BASEDIR, '.env'))
 SECRET_KEY = os.environ.get("SECRET_KEY")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is missing! Make sure it is defined in your environment variables.")
+
 if not APP_PASSWORD:
-    raise RuntimeError("APP_PASSWORD environment variable is missing! Make sure it is defined in your .env file or host environment.")
+    raise RuntimeError("APP_PASSWORD environment variable is missing! Make sure it is defined in your environment variables.")
 
 app = Flask(__name__, static_folder='Image Files')
+
+# Rate limiter setup to prevent login brute-forcing on Render
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# Setup Flask-Caching (using SimpleCache optimized for fast local memory retrieval)
+cache = Cache(app, config={
+    'CACHE_TYPE': 'SimpleCache',
+    'CACHE_DEFAULT_TIMEOUT': 30  # Cache results for 30 seconds by default
+})
 
 database_url = os.environ.get("DATABASE_URL")
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or ('sqlite:///' + os.path.join(BASEDIR, 'bracket.db'))
-app.config['SECRET_KEY'] = SECRET_KEY or "dev-key-change-in-production"
+app.config['SECRET_KEY'] = SECRET_KEY
 db.init_app(app)
 
 STAGE1_ROUNDS = ['s1_r1', 's1_r2']
@@ -65,10 +86,12 @@ def inject_auth_status():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute")  # Protect login from brute-force/timing attacks
 def login():
     if request.method == "POST":
-        password = request.form.get("password")
-        if password == APP_PASSWORD:
+        password = request.form.get("password", "")
+        # Use constant-time comparison to prevent timing attacks
+        if hmac.compare_digest(password.encode('utf-8'), APP_PASSWORD.encode('utf-8')):
             session["authenticated"] = True
             flash("Successfully logged in as Admin!", "info")
             return redirect(url_for("index"))
@@ -92,29 +115,29 @@ with app.app_context():
         insp = inspect(db.engine)
         team_columns = [c['name'] for c in insp.get_columns('team')]
         if 'assigned_team_name' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN assigned_team_name VARCHAR(80) DEFAULT ""'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN assigned_team_name VARCHAR(80) DEFAULT \'\''))
         if 'bot_class' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN bot_class VARCHAR(20) DEFAULT \'3lb\''))
         if 'checked_in' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN checked_in BOOLEAN DEFAULT 0'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN checked_in BOOLEAN DEFAULT FALSE'))
         if 'safety_waiver' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN safety_waiver BOOLEAN DEFAULT 0'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN safety_waiver BOOLEAN DEFAULT FALSE'))
         if 'registration_fee' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT 0'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT FALSE'))
         if 'pit_table_number' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
         if 'last_match_end_time' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN last_match_end_time DATETIME'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN last_match_end_time TIMESTAMP'))
         if 'extension_used' not in team_columns:
-            db.session.execute(text('ALTER TABLE team ADD COLUMN extension_used BOOLEAN DEFAULT 0'))
+            db.session.execute(text('ALTER TABLE team ADD COLUMN extension_used BOOLEAN DEFAULT FALSE'))
 
         match_columns = [c['name'] for c in insp.get_columns('match')]
         if 'bot_class' not in match_columns:
-            db.session.execute(text('ALTER TABLE match ADD COLUMN bot_class VARCHAR(20) DEFAULT "3lb"'))
+            db.session.execute(text('ALTER TABLE match ADD COLUMN bot_class VARCHAR(20) DEFAULT \'3lb\''))
         if 'result_type' not in match_columns:
             db.session.execute(text('ALTER TABLE match ADD COLUMN result_type VARCHAR(10)'))
         if 'queue_status' not in match_columns:
-            db.session.execute(text('ALTER TABLE match ADD COLUMN queue_status VARCHAR(20) DEFAULT "queued"'))
+            db.session.execute(text('ALTER TABLE match ADD COLUMN queue_status VARCHAR(20) DEFAULT \'queued\''))
         if 'queue_order' not in match_columns:
             db.session.execute(text('ALTER TABLE match ADD COLUMN queue_order INTEGER DEFAULT 0'))
         db.session.commit()
@@ -128,8 +151,9 @@ with app.app_context():
     db.session.commit()
 
 
-# ---------- helpers ----------
+# ---------- helpers with caching optimization ----------
 
+@cache.memoize(timeout=60)
 def get_class_settings():
     return {s.key: s.enabled for s in TournamentSetting.query.all()}
 
@@ -237,6 +261,7 @@ def stage1_team_groups(bot_class=None):
 def lock_stage1_round1(bot_class=None):
     for m in matches_for('s1_r1', 1, bot_class=bot_class):
         m.locked = True
+    cache.clear()  # Invalidate cache on mutations
     db.session.commit()
 
 
@@ -244,6 +269,7 @@ def lock_stage2_prereqs(bot_class=None):
     for stage in ('s1_r1', 's1_r2', 'decider'):
         for m in matches_for(stage, 1, bot_class=bot_class):
             m.locked = True
+    cache.clear()
     db.session.commit()
 
 
@@ -260,6 +286,7 @@ def create_round_matches(stage, team_ids, round_num=1, bot_class='3lb', rng=None
         db.session.add(Match(stage=stage, round_num=round_num, slot_index=len(pairs),
                               team1_id=bye, team2_id=None, bot_class=bot_class, is_bye=True,
                               winner_id=bye, locked=True))
+    cache.clear()
     db.session.commit()
 
 
@@ -279,6 +306,7 @@ def create_stage1_round2_matches(bot_class):
                                   team1_id=bye, team2_id=None, bot_class=bot_class, is_bye=True,
                                   winner_id=bye, locked=True))
     lock_stage1_round1(bot_class)
+    cache.clear()
     db.session.commit()
 
 
@@ -528,6 +556,7 @@ def competitor_dashboard():
 
 
 @app.route('/standings')
+@cache.cached(timeout=15, query_string=True)  # Cache public standings view for 15 seconds
 def standings():
     current_class = request.args.get('class', '3lb')
     enabled = enabled_classes()
@@ -572,7 +601,6 @@ def competitor_timers():
     
     teams = Team.query.filter_by(bot_class=current_class, dropped=False).order_by(Team.name).all()
     
-    # 1. Identify 0-2 or 1-2 eliminated teams from Stage 1 / Decider
     s1_done = round_complete('s1_r1', bot_class=current_class) and round_complete('s1_r2', bot_class=current_class)
     eliminated_stage1_ids = set()
     if s1_done:
@@ -580,7 +608,6 @@ def competitor_timers():
         for t in oh_two:
             eliminated_stage1_ids.add(t.id)
             
-    # Check decider round losses (teams that went 1-2)
     if round_generated('decider', 1, current_class):
         for m in matches_for('decider', 1, bot_class=current_class):
             if m.winner_id is not None:
@@ -588,7 +615,6 @@ def competitor_timers():
                 if loser_id:
                     eliminated_stage1_ids.add(loser_id)
 
-    # 2. Identify Top 4 teams (Champion, 2nd, 3rd, 4th)
     bracket = stage2_bracket_data(current_class)
     placement_match = stage2_placement_match(current_class)
     
@@ -607,7 +633,6 @@ def competitor_timers():
         if placement_match.team1_id: top_four_ids.add(placement_match.team1_id)
         if placement_match.team2_id: top_four_ids.add(placement_match.team2_id)
 
-    # 3. Identify teams currently eliminated from Stage 2 bracket rounds
     bracket_eliminated_ids = set()
     r = 1
     while round_generated('s2', r, current_class):
@@ -621,11 +646,8 @@ def competitor_timers():
 
     timer_data = []
     for t in teams:
-        # Exclude 0-2 / 1-2 Stage 1 eliminations unless they somehow reached top 4
         if t.id in eliminated_stage1_ids and t.id not in top_four_ids:
             continue
-            
-        # Exclude teams knocked out of the Stage 2 bracket
         if t.id in bracket_eliminated_ids and t.id not in top_four_ids:
             continue
 
@@ -663,14 +685,17 @@ def admin_timers():
                 else:
                     t.last_match_end_time = datetime.utcnow() - timedelta(minutes=20) + timedelta(minutes=20)
                 t.extension_used = True
+                cache.clear()
                 db.session.commit()
                 flash(f'Granted 20-minute extension to {t.name}.', 'info')
             elif action == 'reset_extension':
                 t.extension_used = False
+                cache.clear()
                 db.session.commit()
                 flash(f'Reset extension status for {t.name}.', 'info')
             elif action == 'reset_timer':
                 t.last_match_end_time = None
+                cache.clear()
                 db.session.commit()
                 flash(f'Reset repair timer for {t.name}.', 'info')
         return redirect(url_for('admin_timers', **{'class': current_class}))
@@ -718,6 +743,7 @@ def teams():
                     db.session.add(Team(name=bot_name, assigned_team_name=assigned_team_name,
                                         bot_class=bot_class, checked_in=checked_in,
                                         safety_waiver=safety_waiver, pit_table_number=pit_table_number))
+                    cache.clear()
                     db.session.commit()
             else:
                 flash('Please provide both a bot name and the assigned team name.', 'error')
@@ -741,6 +767,7 @@ def teams():
                                     bot_class=bot_class))
                 added += 1
             if added > 0:
+                cache.clear()
                 db.session.commit()
                 flash(f'Added {added} bots.', 'info')
             if skipped:
@@ -777,6 +804,7 @@ def teams():
                     t.safety_waiver = safety_waiver
                     t.registration_fee = registration_fee
                     t.bot_class = bot_class_value
+                    cache.clear()
                     db.session.commit()
         elif action == 'delete':
             tid = request.form.get('team_id')
@@ -787,10 +815,12 @@ def teams():
                                             Match.team2_id == t.id,
                                             Match.winner_id == t.id)).delete(synchronize_session=False)
                     db.session.delete(t)
+                    cache.clear()
                     db.session.commit()
         elif action == 'clear_all':
             Match.query.filter_by(bot_class=bot_class).delete(synchronize_session=False)
             Team.query.filter_by(bot_class=bot_class).delete(synchronize_session=False)
+            cache.clear()
             db.session.commit()
             flash(f'All {CLASS_LABELS[bot_class]} bots cleared.', 'info')
         return redirect(url_for('teams', **{'class': bot_class}))
@@ -811,6 +841,7 @@ def settings():
                 setting.enabled = enabled_value
             else:
                 db.session.add(TournamentSetting(key=cls, enabled=enabled_value))
+        cache.clear()
         db.session.commit()
         flash('Global tournament settings updated.', 'info')
         return redirect(url_for('settings'))
@@ -839,6 +870,7 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
             else:
                 ids = team_id_source(bot_class)
                 create_round_matches(stage, ids, round_num, bot_class=bot_class)
+            cache.clear()
             return redirect(url_for(request.endpoint, **{'class': bot_class}))
         elif action == 'save_edits':
             ms = matches_for(stage, round_num, bot_class=bot_class)
@@ -858,11 +890,13 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
                 assigned.add(t1)
                 assigned.add(t2)
                 m.team1_id, m.team2_id = t1, t2
+            cache.clear()
             db.session.commit()
             return redirect(url_for(request.endpoint, **{'class': bot_class}))
         elif action == 'lock':
             for m in matches_for(stage, round_num, bot_class=bot_class):
                 m.locked = True
+            cache.clear()
             db.session.commit()
             return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
         elif action == 'results':
@@ -880,6 +914,7 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
                             Team.query.get(m.team2_id).last_match_end_time = now
                     m.winner_id = new_winner_id
                 m.result_type = request.form.get(f'result_type_{m.id}') or None
+            cache.clear()
             db.session.commit()
             return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
         return redirect(url_for(request.endpoint, **{'class': bot_class}))
@@ -963,6 +998,7 @@ def stage2_bracket():
                 else:
                     db.session.add(Match(stage='s2', round_num=1, slot_index=i,
                                           team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
+            cache.clear()
             db.session.commit()
             lock_stage2_prereqs(bot_class)
             session[last_key] = 1
@@ -1026,6 +1062,7 @@ def stage2(round_num):
                 else:
                     db.session.add(Match(stage='s2', round_num=1, slot_index=i,
                                           team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
+            cache.clear()
             db.session.commit()
             lock_stage2_prereqs(bot_class)
             session[last_key] = 1
@@ -1052,6 +1089,7 @@ def stage2(round_num):
             for m in placement_matches:
                 if m.winner_id:
                     m.locked = True
+            cache.clear()
             db.session.commit()
             session[f'stage2_last_round_{bot_class}'] = round_num
         elif action == 'generate_next':
@@ -1083,12 +1121,14 @@ def stage2(round_num):
                     Match.query.filter_by(stage='s2_placement', bot_class=bot_class).delete()
                     db.session.add(Match(stage='s2_placement', round_num=1, slot_index=0,
                                           team1_id=losers[0], team2_id=losers[1], bot_class=bot_class, locked=False))
+            cache.clear()
             db.session.commit()
             session[last_key] = next_round
             return redirect(url_for('stage2', round_num=next_round, **{'class': bot_class}))
         elif action == 'end_tournament':
             for m in matches_for('s2', bot_class=bot_class) + matches_for('s2_placement', bot_class=bot_class):
                 m.locked = True
+            cache.clear()
             db.session.commit()
             flash('Tournament ended. All Stage 2 matches are now locked.', 'info')
             return redirect(url_for('stage2', round_num=round_num, **{'class': bot_class}))
@@ -1162,6 +1202,7 @@ def queue():
                 flash('A match is already in progress. Finish or re-queue it first.', 'error')
             else:
                 m.queue_status = 'in_progress'
+                cache.clear()
                 db.session.commit()
 
         elif action == 'requeue_bottom' and m:
@@ -1174,11 +1215,13 @@ def queue():
             m.winner_id = None
             m.locked = False
             m.result_type = None
+            cache.clear()
             db.session.commit()
             flash(f'Match sent back to the bottom of the upcoming queue.', 'info')
 
         elif action == 'finish_match' and m:
             m.queue_status = 'awaiting_results'
+            cache.clear()
             db.session.commit()
 
         elif action == 'auto_fill_queue':
@@ -1191,6 +1234,7 @@ def queue():
 
             for idx, match in enumerate(unassigned):
                 match.queue_order = idx
+            cache.clear()
             db.session.commit()
             flash('Queue refreshed with upcoming matches.', 'info')
 
@@ -1233,11 +1277,12 @@ def reorder_queue():
         m = Match.query.get(match_id)
         if m:
             m.queue_order = position
+    cache.clear()
     db.session.commit()
     return jsonify({'status': 'success'})
 
 
-@app.reset if False else app.route('/reset', methods=['POST'])
+@app.route('/reset', methods=['POST'])
 @login_required
 def reset_tournament():
     Match.query.delete()
@@ -1245,10 +1290,11 @@ def reset_tournament():
         Team.last_match_end_time: None,
         Team.extension_used: False
     })
+    cache.clear()
     db.session.commit()
     flash('Tournament has been reset. All match pairings, results, and repair timers have been cleared.', 'info')
     return redirect(url_for('index'))
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)
