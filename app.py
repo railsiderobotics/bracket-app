@@ -334,17 +334,21 @@ def stage1_standings(bot_class=None):
     stats = list(stage1_stats(bot_class).values())
     two_oh = [s for s in stats if s['wins'] == 2 and s['losses'] == 0]
     others = [s for s in stats if not (s['wins'] == 2 and s['losses'] == 0)]
+    
     two_oh.sort(key=lambda item: (
-        item['loss_to'],
-        item['loss_ko'],
-        -item['loss_jd'],
+        -item['to'],
+        -item['ko'],
+        item['jd'],
         item['team'].name
     ))
+    
     others.sort(key=lambda item: (
         -item['wins'],
         item['loss_to'],
         item['loss_ko'],
         -item['loss_jd'],
+        -item['to'],
+        -item['ko'],
         item['team'].name
     ))
     return two_oh + others
@@ -474,7 +478,7 @@ def index():
         two_oh, one_one, oh_two, incomplete = stage1_buckets(current_class)
 
     decider_needed = s1_done and len(one_one) > 0
-    decider_done = round_complete('decider', bot_class=current_class) if round_generated('decider', bot_class=current_class) else (decider_needed is False and s1_done)
+    decider_done = round_complete('decider', bot_class=current_class) if round_generated('decider', 1, current_class) else (decider_needed is False and s1_done)
 
     stage2_started = round_generated('s2', 1, bot_class=current_class)
     stage2_ready_class = next((cls for cls in enabled if class_stage2_ready(cls)), None)
@@ -482,7 +486,7 @@ def index():
     return render_template('index.html', teams=teams, s1_done=s1_done,
                            two_oh=two_oh, one_one=one_one, oh_two=oh_two,
                            incomplete=incomplete, decider_needed=decider_needed,
-                           decider_generated=round_generated('decider', bot_class=current_class),
+                           decider_generated=round_generated('decider', 1, current_class),
                            decider_done=decider_done, stage2_started=stage2_started,
                            stage2_ready_class=stage2_ready_class,
                            current_class=current_class,
