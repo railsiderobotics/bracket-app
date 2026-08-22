@@ -35,7 +35,9 @@ app = Flask(__name__, static_folder='Image Files')
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["200 per day", "50 per hour"],
+    # Avoid applying broad global limits that can trigger Render health-check 429s.
+    # Login is protected explicitly with a per-route limiter below.
+    default_limits=[],
     storage_uri="memory://"
 )
 
@@ -1069,12 +1071,26 @@ def stage2(round_num):
         elif action == 'results':
             save_matches = matches_for('s2', round_num, bot_class=bot_class)
             placement_matches = matches_for('s2_placement', bot_class=bot_class)
-            for m in save_matches + placement_matches:
+
+            # Determine if this is the final round (no next round generated and single match)
+            next_exists = round_generated('s2', round_num + 1, bot_class)
+            final_match = None
+            regular_matches = []
+            if not next_exists and len(save_matches) == 1:
+                final_match = save_matches[0]
+            else:
+                regular_matches = save_matches
+
+            # Process regular round matches and placement matches (these come from the same form inputs)
+            for m in regular_matches + placement_matches:
                 if m.is_bye:
                     continue
                 w = request.form.get(f'winner_{m.id}')
                 if w:
-                    new_winner_id = int(w)
+                    try:
+                        new_winner_id = int(w)
+                    except ValueError:
+                        continue
                     if m.winner_id != new_winner_id:
                         now = datetime.utcnow()
                         if m.team1_id:
@@ -1083,12 +1099,31 @@ def stage2(round_num):
                             Team.query.get(m.team2_id).last_match_end_time = now
                     m.winner_id = new_winner_id
                 m.result_type = None
-            if len(save_matches) == 1 and all(m.winner_id for m in save_matches):
-                for m in save_matches:
-                    m.locked = True
+
+            # Process final match separately to avoid mixing it with other rounds
+            if final_match and not final_match.is_bye:
+                w = request.form.get(f'winner_{final_match.id}')
+                if w:
+                    try:
+                        new_winner_id = int(w)
+                    except ValueError:
+                        new_winner_id = None
+                    if new_winner_id:
+                        if final_match.winner_id != new_winner_id:
+                            now = datetime.utcnow()
+                            if final_match.team1_id:
+                                Team.query.get(final_match.team1_id).last_match_end_time = now
+                            if final_match.team2_id:
+                                Team.query.get(final_match.team2_id).last_match_end_time = now
+                        final_match.winner_id = new_winner_id
+                        final_match.result_type = None
+                        final_match.locked = True
+
+            # Lock any placement matches with a winner
             for m in placement_matches:
                 if m.winner_id:
                     m.locked = True
+
             cache.clear()
             db.session.commit()
             session[f'stage2_last_round_{bot_class}'] = round_num
