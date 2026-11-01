@@ -1045,6 +1045,13 @@ def stage2_bracket():
                            CLASS_LABELS=CLASS_LABELS)
 
 
+@app.route('/stage2/overlay')
+def stage2_overlay():
+    bot_class = current_selected_class('3lb')
+    bracket = stage2_bracket_data(bot_class)
+    return render_template('stage2_overlay.html', bracket=bracket)
+
+
 @app.route('/stage2/<int:round_num>', methods=['GET', 'POST'])
 @login_required
 def stage2(round_num):

@@ -20,6 +20,7 @@
   <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
       <a class="btn btn-outline-primary" href="{{ url_for('stage2', round_num=session.get('stage2_last_round_' ~ current_class, 1), **{'class': current_class}) }}">View Matches</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('stage2_overlay', **{'class': current_class}) }}" target="_blank" rel="noopener">Streaming Overlay</a>
     </div>
 
     <form method="post" action="{{ url_for('stage2_bracket', **{'class': current_class}) }}" class="m-0">

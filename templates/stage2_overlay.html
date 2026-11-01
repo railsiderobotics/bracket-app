@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="20">
+  <title>Bracket Overlay</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: transparent; }
+    body {
+      color: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+      padding: 18px;
+      overflow: auto;
+    }
+    .bracket {
+      display: flex;
+      align-items: stretch;
+      gap: 22px;
+      width: max-content;
+      min-width: 100%;
+    }
+    .round {
+      display: flex;
+      flex: 1 0 240px;
+      flex-direction: column;
+      justify-content: space-around;
+      gap: 14px;
+      min-width: 240px;
+    }
+    .round-title {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      text-shadow: 0 2px 4px #000;
+    }
+    .match {
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .75);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, .88);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+    }
+    .team {
+      min-height: 42px;
+      padding: 10px 12px;
+      overflow-wrap: anywhere;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .team + .team { border-top: 1px solid rgba(255, 255, 255, .25); }
+    .winner { background: rgba(25, 135, 84, .9); }
+    .bye { color: #d1d5db; font-style: italic; }
+    @media (max-width: 600px) {
+      body { padding: 10px; }
+      .bracket { gap: 12px; }
+      .round { flex-basis: 200px; min-width: 200px; }
+      .team { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+  {% if bracket %}
+    {% set match_num_map = {} %}
+    {% set calc_counter = namespace(value=1) %}
+    {% for bracket_round in bracket %}
+      {% for bracket_match in bracket_round.matches %}
+        {% set _ = match_num_map.update({(bracket_round.round, loop.index0): calc_counter.value}) %}
+        {% set calc_counter.value = calc_counter.value + 1 %}
+      {% endfor %}
+    {% endfor %}
+    <main class="bracket" aria-label="Tournament bracket">
+      {% for round in bracket %}
+        <section class="round" aria-label="Round {{ round.round }}">
+          <div class="round-title">Round {{ round.round }}</div>
+          {% for match in round.matches %}
+            <div class="match">
+              <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team1_id %}winner{% endif %}">
+                {% if match.team1 %}
+                  {{ match.team1.name }}
+                {% elif round.round > 1 %}
+                  {% set prev_match_idx = loop.index0 * 2 %}
+                  Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                {% else %}
+                  TBD
+                {% endif %}
+              </div>
+              <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team2_id %}winner{% endif %}{% if match.is_bye %} bye{% endif %}">
+                {% if match.is_bye %}
+                  BYE
+                {% elif match.team2 %}
+                  {{ match.team2.name }}
+                {% elif round.round > 1 %}
+                  {% set prev_match_idx = (loop.index0 * 2) + 1 %}
+                  Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                {% else %}
+                  TBD
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </section>
+      {% endfor %}
+    </main>
+  {% endif %}
+</body>
+</html>

@@ -9,3 +9,5 @@ Deployed on Render
 To ensure website remains active and doesn't spin down after 15 minutes of activity this uses uptime robot to ping the website every 5 minutes.
 
 Start by adding teams. Use the Bulk Add Format Generator Template if its helpful
+
+For streaming, open the Stage 2 bracket's **Streaming Overlay** link or use `/stage2/overlay?class=3lb` as a transparent browser source. Replace `3lb` with `1lb` or `1lb_plant` to select another bot class. The overlay refreshes every 20 seconds.
