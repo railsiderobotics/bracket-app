@@ -126,6 +126,17 @@ with app.app_context():
             db.session.execute(text('ALTER TABLE team ADD COLUMN safety_waiver BOOLEAN DEFAULT FALSE'))
         if 'registration_fee' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN registration_fee BOOLEAN DEFAULT FALSE'))
+        if 'waiver_check_in' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN waiver_check_in BOOLEAN DEFAULT FALSE'))
+            if 'checked_in' in team_columns and 'safety_waiver' in team_columns:
+                db.session.execute(text(
+                    'UPDATE team SET waiver_check_in = '
+                    'CASE WHEN checked_in = TRUE OR safety_waiver = TRUE THEN TRUE ELSE FALSE END'
+                ))
+        if 'weigh_in' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN weigh_in BOOLEAN DEFAULT FALSE'))
+        if 'safety' not in team_columns:
+            db.session.execute(text('ALTER TABLE team ADD COLUMN safety BOOLEAN DEFAULT FALSE'))
         if 'pit_table_number' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
         if 'last_match_end_time' not in team_columns:
@@ -735,16 +746,13 @@ def teams():
         if action == 'add':
             bot_name = request.form.get('bot_name', '').strip()
             assigned_team_name = request.form.get('assigned_team_name', '').strip()
-            checked_in = bool(request.form.get('checked_in'))
-            safety_waiver = bool(request.form.get('safety_waiver'))
             pit_table_number = request.form.get('pit_table_number', '').strip() or None
             if bot_name and assigned_team_name:
                 if Team.query.filter_by(name=bot_name).first():
                     flash(f'Bot "{bot_name}" already exists.', 'error')
                 else:
                     db.session.add(Team(name=bot_name, assigned_team_name=assigned_team_name,
-                                        bot_class=bot_class, checked_in=checked_in,
-                                        safety_waiver=safety_waiver, pit_table_number=pit_table_number))
+                                        bot_class=bot_class, pit_table_number=pit_table_number))
                     cache.clear()
                     db.session.commit()
             else:
@@ -782,9 +790,10 @@ def teams():
                     bot_name = request.form.get(f'bot_name_{t.id}')
                     assigned_team_name = request.form.get(f'assigned_team_name_{t.id}')
                     pit_table_number = request.form.get(f'pit_table_number_{t.id}')
-                    checked_in = bool(request.form.get(f'checked_in_{t.id}'))
-                    safety_waiver = bool(request.form.get(f'safety_waiver_{t.id}'))
                     registration_fee = bool(request.form.get(f'registration_fee_{t.id}'))
+                    waiver_check_in = bool(request.form.get(f'waiver_check_in_{t.id}'))
+                    weigh_in = bool(request.form.get(f'weigh_in_{t.id}'))
+                    safety = bool(request.form.get(f'safety_{t.id}'))
                     bot_class_value = request.form.get(f'bot_class_{t.id}', t.bot_class)
                     if bot_class_value not in BOT_CLASSES:
                         bot_class_value = t.bot_class
@@ -802,9 +811,10 @@ def teams():
                         t.assigned_team_name = assigned_team_name
                     if pit_table_number is not None:
                         t.pit_table_number = pit_table_number.strip() or None
-                    t.checked_in = checked_in
-                    t.safety_waiver = safety_waiver
                     t.registration_fee = registration_fee
+                    t.waiver_check_in = waiver_check_in
+                    t.weigh_in = weigh_in
+                    t.safety = safety
                     t.bot_class = bot_class_value
                     cache.clear()
                     db.session.commit()

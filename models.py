@@ -12,6 +12,9 @@ class Team(db.Model):
     checked_in = db.Column(db.Boolean, default=False)
     safety_waiver = db.Column(db.Boolean, default=False)
     registration_fee = db.Column(db.Boolean, default=False)
+    waiver_check_in = db.Column(db.Boolean, default=False)
+    weigh_in = db.Column(db.Boolean, default=False)
+    safety = db.Column(db.Boolean, default=False)
     pit_table_number = db.Column(db.String(20), nullable=True)
     dropped = db.Column(db.Boolean, default=False)
     
