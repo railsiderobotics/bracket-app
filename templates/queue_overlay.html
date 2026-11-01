@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="20">
+  <title>Upcoming Queue Overlay</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; background: #000; }
+    body {
+      padding: clamp(16px, 3vw, 40px);
+      color: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    main {
+      width: min(100%, 1200px);
+      margin: 0 auto;
+    }
+    h1 {
+      margin: 0 0 20px;
+      font-size: clamp(24px, 3vw, 38px);
+      text-align: center;
+    }
+    .queue {
+      display: grid;
+      gap: 12px;
+    }
+    .match {
+      display: grid;
+      grid-template-columns: minmax(140px, .7fr) minmax(0, 3fr);
+      align-items: center;
+      gap: 18px;
+      min-height: 82px;
+      padding: 14px 18px;
+      border: 1px solid rgba(255, 255, 255, .2);
+      border-radius: 10px;
+      background: #252a36;
+      box-shadow: 0 3px 12px rgba(0, 0, 0, .45);
+    }
+    .queue-position {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .up-next { background: #dc3545; color: #fff; }
+    .on-deck { background: #ffc107; color: #171717; }
+    .in-the-hole { background: #0dcaf0; color: #171717; }
+    .number { border: 1px solid #adb5bd; color: #fff; }
+    .rested { background: #198754; color: #fff; }
+    .resting { background: #dc3545; color: #fff; }
+    .teams {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      font-size: clamp(17px, 2vw, 24px);
+      font-weight: 700;
+    }
+    .team { overflow-wrap: anywhere; }
+    .team:last-child { text-align: right; }
+    .vs {
+      color: #adb5bd;
+      font-size: .75em;
+      font-weight: 500;
+    }
+    .pit {
+      display: block;
+      margin-top: 5px;
+      color: #c3c8d0;
+      font-size: .65em;
+      font-weight: 500;
+    }
+    .empty {
+      padding: 28px 18px;
+      border: 1px solid rgba(255, 255, 255, .2);
+      border-radius: 10px;
+      background: #252a36;
+      color: #d7dbe2;
+      font-size: 20px;
+      text-align: center;
+    }
+    @media (max-width: 640px) {
+      .match {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .queue-position { justify-content: center; }
+      .teams { gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Upcoming Queue</h1>
+    {% if queued_matches %}
+      <section class="queue" aria-label="Upcoming queue">
+        {% for item in queued_matches %}
+          {% set match = item.match %}
+          <article class="match">
+            <div class="queue-position">
+              {% if loop.index == 1 %}
+                <span class="badge up-next">UP NEXT</span>
+              {% elif loop.index == 2 %}
+                <span class="badge on-deck">ON DECK</span>
+              {% elif loop.index == 3 %}
+                <span class="badge in-the-hole">IN THE HOLE</span>
+              {% else %}
+                <span class="badge number">#{{ loop.index }}</span>
+              {% endif %}
+              {% if item.both_rested %}
+                <span class="badge rested">✓ Rested</span>
+              {% else %}
+                <span class="badge resting">✗ Resting</span>
+              {% endif %}
+            </div>
+            <div class="teams">
+              <div class="team">
+                {{ match.team1.name if match.team1 else 'TBD' }}
+                {% if match.team1 %}<span class="pit">Pit {{ match.team1.pit_table_number or 'N/A' }}</span>{% endif %}
+              </div>
+              <span class="vs">vs</span>
+              <div class="team">
+                {{ match.team2.name if match.team2 else 'TBD' }}
+                {% if match.team2 %}<span class="pit">Pit {{ match.team2.pit_table_number or 'N/A' }}</span>{% endif %}
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% else %}
+      <div class="empty">No matches currently in queue.</div>
+    {% endif %}
+  </main>
+</body>
+</html>

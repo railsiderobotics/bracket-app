@@ -1240,6 +1240,18 @@ def stage2(round_num):
 
 # ---------- queue system ----------
 
+def upcoming_queue_items(bot_class):
+    queued_raw = Match.query.filter_by(bot_class=bot_class, queue_status='queued', winner_id=None)\
+                            .order_by(Match.queue_order.asc()).all()
+    return [{
+        'match': match,
+        'both_rested': (
+            (check_rest_status(match.team1)[0] if match.team1 else True)
+            and (check_rest_status(match.team2)[0] if match.team2 else True)
+        )
+    } for match in queued_raw]
+
+
 @app.route('/queue', methods=['GET', 'POST'])
 @login_required
 def queue():
@@ -1296,17 +1308,7 @@ def queue():
         return redirect(url_for('queue', **{'class': current_class}))
 
     in_progress = Match.query.filter_by(bot_class=current_class, queue_status='in_progress').first()
-    queued_raw = Match.query.filter_by(bot_class=current_class, queue_status='queued', winner_id=None)\
-                            .order_by(Match.queue_order.asc()).all()
-
-    queued_matches = []
-    for m in queued_raw:
-        t1_ready = check_rest_status(m.team1)[0] if m.team1 else True
-        t2_ready = check_rest_status(m.team2)[0] if m.team2 else True
-        queued_matches.append({
-            'match': m,
-            'both_rested': t1_ready and t2_ready
-        })
+    queued_matches = upcoming_queue_items(current_class)
 
     awaiting_results = Match.query.filter_by(bot_class=current_class, queue_status='awaiting_results', winner_id=None)\
                                    .order_by(Match.id.desc()).all()
@@ -1322,6 +1324,13 @@ def queue():
                            current_class=current_class,
                            BOT_CLASSES=enabled,
                            CLASS_LABELS=CLASS_LABELS)
+
+
+@app.route('/queue/overlay')
+def queue_overlay():
+    current_class = current_selected_class('3lb')
+    return render_template('queue_overlay.html',
+                           queued_matches=upcoming_queue_items(current_class))
 
 
 @app.route('/api/reorder_queue', methods=['POST'])
