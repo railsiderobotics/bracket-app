@@ -587,6 +587,17 @@ def standings():
                            CLASS_LABELS=CLASS_LABELS)
 
 
+@app.route('/standings/overlay')
+def standings_overlay():
+    current_class = request.args.get('class', '3lb')
+    enabled = enabled_classes()
+    if current_class not in enabled:
+        current_class = enabled[0] if enabled else '3lb'
+
+    return render_template('standings_overlay.html',
+                           standings=stage1_standings(current_class))
+
+
 @app.route('/competitor_results')
 def competitor_results():
     current_class = request.args.get('class', '3lb')
