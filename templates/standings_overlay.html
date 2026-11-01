@@ -30,7 +30,7 @@
       border-spacing: 0;
       table-layout: fixed;
       background: #171a22;
-      font-size: clamp(12px, 2.1vh, 24px);
+      font-size: clamp(24px, 4.2vh, 48px);
     }
     th, td {
       padding: clamp(4px, 1.1vh, 12px) clamp(6px, 1vw, 16px);
@@ -57,7 +57,7 @@
     @media (max-width: 600px) {
       body { padding: 2vh 2vw; }
       .standings-window { height: 96vh; }
-      table { font-size: clamp(10px, 1.8vh, 16px); }
+      table { font-size: clamp(20px, 3.6vh, 32px); }
       th, td { padding: 3px 4px; }
       .rank { width: 10%; }
       .bot { width: 48%; }
@@ -113,7 +113,7 @@
       }
 
       if (previousFrame) {
-        const distance = (timestamp - previousFrame) * 0.03;
+        const distance = (timestamp - previousFrame) * 0.015;
         standingsWindow.scrollTop += movingDown ? distance : -distance;
       }
       previousFrame = timestamp;
