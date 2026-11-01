@@ -7,62 +7,93 @@
   <title>Bracket Overlay</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { min-height: 100%; margin: 0; background: transparent; }
+    html, body { min-height: 100%; margin: 0; background: #000; }
     body {
       color: #fff;
       font-family: Arial, Helvetica, sans-serif;
-      padding: 18px;
       overflow: auto;
     }
-    .bracket {
-      display: flex;
-      align-items: stretch;
-      gap: 22px;
-      width: max-content;
-      min-width: 100%;
+    .bracket-layout {
+      width: min(100%, 1560px);
+      margin: 0 auto;
+      padding: 24px 24px 36px;
     }
-    .round {
-      display: flex;
-      flex: 1 0 240px;
-      flex-direction: column;
-      justify-content: space-around;
-      gap: 14px;
-      min-width: 240px;
+    .round-headings {
+      display: grid;
+      grid-template-columns: repeat(var(--round-count), minmax(0, 1fr));
+      margin-bottom: 12px;
     }
     .round-title {
       color: #fff;
-      font-size: 18px;
+      font-size: 20px;
       font-weight: 700;
       text-align: center;
-      text-shadow: 0 2px 4px #000;
+      text-shadow: 0 2px 5px #000;
+      padding: 0 2.6%;
+    }
+    .bracket-stage {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(var(--round-count), minmax(0, 1fr));
+      height: max(68vh, {{ bracket[0].matches|length * 92 }}px);
+      min-height: 420px;
+      isolation: isolate;
+    }
+    .connectors {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .connector {
+      fill: none;
+      stroke: #e5e7eb;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+      opacity: .9;
+    }
+    .round {
+      position: relative;
+      min-width: 0;
     }
     .match {
+      position: absolute;
+      left: clamp(24px, 2.6vw, 40px);
+      right: clamp(24px, 2.6vw, 40px);
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, .75);
+      transform: translateY(-50%);
+      border: 1px solid rgba(255, 255, 255, .8);
       border-radius: 8px;
-      background: rgba(15, 23, 42, .88);
-      box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+      background: #252a36;
+      box-shadow: 0 3px 12px rgba(0, 0, 0, .6);
     }
     .team {
+      display: flex;
+      align-items: center;
       min-height: 42px;
-      padding: 10px 12px;
+      padding: 9px 12px;
       overflow-wrap: anywhere;
       font-size: 16px;
       font-weight: 600;
     }
-    .team + .team { border-top: 1px solid rgba(255, 255, 255, .25); }
-    .winner { background: rgba(25, 135, 84, .9); }
+    .team + .team { border-top: 1px solid rgba(255, 255, 255, .28); }
+    .winner { background: #28794e; }
     .bye { color: #d1d5db; font-style: italic; }
-    @media (max-width: 600px) {
-      body { padding: 10px; }
-      .bracket { gap: 12px; }
-      .round { flex-basis: 200px; min-width: 200px; }
-      .team { font-size: 14px; }
+    @media (max-width: 760px) {
+      .bracket-layout { padding: 18px 12px 28px; }
+      .round-title { font-size: 16px; }
+      .team { min-height: 38px; padding: 8px; font-size: 13px; }
     }
   </style>
 </head>
 <body>
   {% if bracket %}
+    {% set round_count = bracket|length %}
     {% set match_num_map = {} %}
     {% set calc_counter = namespace(value=1) %}
     {% for bracket_round in bracket %}
@@ -71,38 +102,60 @@
         {% set calc_counter.value = calc_counter.value + 1 %}
       {% endfor %}
     {% endfor %}
-    <main class="bracket" aria-label="Tournament bracket">
-      {% for round in bracket %}
-        <section class="round" aria-label="Round {{ round.round }}">
+    <main class="bracket-layout" style="--round-count: {{ round_count }};">
+      <header class="round-headings">
+        {% for round in bracket %}
           <div class="round-title">Round {{ round.round }}</div>
-          {% for match in round.matches %}
-            <div class="match">
-              <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team1_id %}winner{% endif %}">
-                {% if match.team1 %}
-                  {{ match.team1.name }}
-                {% elif round.round > 1 %}
-                  {% set prev_match_idx = loop.index0 * 2 %}
-                  Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
-                {% else %}
-                  TBD
-                {% endif %}
+        {% endfor %}
+      </header>
+      <div class="bracket-stage">
+        {% if round_count > 1 %}
+          <svg class="connectors" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            {% for round in bracket[:-1] %}
+              {% set round_index = loop.index0 %}
+              {% set next_round = bracket[round_index + 1] %}
+              {% for match in round.matches %}
+                {% set next_match_index = loop.index0 // 2 %}
+                {% set source_y = ((loop.index0 + 0.5) / round.matches|length * 100)|round(3) %}
+                {% set target_y = ((next_match_index + 0.5) / next_round.matches|length * 100)|round(3) %}
+                {% set branch_x = (((round_index + 1) / round_count) * 100)|round(3) %}
+                <path class="connector" d="M {{ (branch_x - 2.6)|round(3) }} {{ source_y }} H {{ branch_x }} V {{ target_y }} H {{ (branch_x + 2.6)|round(3) }}" />
+              {% endfor %}
+            {% endfor %}
+          </svg>
+        {% endif %}
+        {% for round in bracket %}
+          <section class="round" aria-label="Round {{ round.round }}">
+            {% for match in round.matches %}
+              {% set position = ((loop.index0 + 0.5) / round.matches|length * 100)|round(3) %}
+              <div class="match" style="top: {{ position }}%;">
+                <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team1_id %}winner{% endif %}">
+                  {% if match.team1 %}
+                    {{ match.team1.name }}
+                  {% elif round.round > 1 %}
+                    {% set prev_match_idx = loop.index0 * 2 %}
+                    Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                  {% else %}
+                    TBD
+                  {% endif %}
+                </div>
+                <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team2_id %}winner{% endif %}{% if match.is_bye %} bye{% endif %}">
+                  {% if match.is_bye %}
+                    BYE
+                  {% elif match.team2 %}
+                    {{ match.team2.name }}
+                  {% elif round.round > 1 %}
+                    {% set prev_match_idx = (loop.index0 * 2) + 1 %}
+                    Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
+                  {% else %}
+                    TBD
+                  {% endif %}
+                </div>
               </div>
-              <div class="team {% if match.winner_id is defined and match.winner_id and match.winner_id == match.team2_id %}winner{% endif %}{% if match.is_bye %} bye{% endif %}">
-                {% if match.is_bye %}
-                  BYE
-                {% elif match.team2 %}
-                  {{ match.team2.name }}
-                {% elif round.round > 1 %}
-                  {% set prev_match_idx = (loop.index0 * 2) + 1 %}
-                  Winner of Match #{{ match_num_map.get((round.round - 1, prev_match_idx), 'TBD') }}
-                {% else %}
-                  TBD
-                {% endif %}
-              </div>
-            </div>
-          {% endfor %}
-        </section>
-      {% endfor %}
+            {% endfor %}
+          </section>
+        {% endfor %}
+      </div>
     </main>
   {% endif %}
 </body>
