@@ -50,6 +50,17 @@
                 <div class="d-flex flex-wrap gap-2">
                   <span class="badge bg-success">Winner: {{ m.winner.name if m.winner else 'TBD' }}</span>
                 </div>
+                {% if is_final and not next_generated %}
+                  <form method="post" class="mt-3" data-submit-on-clear="1" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+                    <input type="hidden" name="action" value="results">
+                    <div class="d-grid gap-2 mb-3">
+                      <button type="button" class="btn btn-outline-primary winner-toggle top {% if m.winner_id==m.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team1_id }}" data-no-submit="1">{{ m.team1.name }}</button>
+                      <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if m.winner_id==m.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ m.id }}" data-value="{{ m.team2_id }}" data-no-submit="1">{{ m.team2.name }}</button>
+                    </div>
+                    <input type="hidden" name="winner_{{ m.id }}" id="winner_input_{{ m.id }}" value="{{ m.winner_id or '' }}">
+                    <button class="btn btn-outline-primary">Update or Reset Final Result</button>
+                  </form>
+                {% endif %}
               {% endif %}
             </div>
           </div>
@@ -66,9 +77,18 @@
           <div class="d-flex gap-2">
             <span class="badge bg-success">Winner: {{ placement_match.winner.name if placement_match.winner else 'TBD' }}</span>
           </div>
+          <form method="post" class="mt-3" data-submit-on-clear="1" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+            <input type="hidden" name="action" value="results">
+            <div class="d-grid gap-2 mb-3">
+              <button type="button" class="btn btn-outline-primary winner-toggle top {% if placement_match.winner_id==placement_match.team1_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team1_id }}" data-no-submit="1">{{ placement_match.team1.name }}</button>
+              <button type="button" class="btn btn-outline-primary winner-toggle bottom {% if placement_match.winner_id==placement_match.team2_id %}active{% endif %}" data-action="winner" data-match-id="{{ placement_match.id }}" data-value="{{ placement_match.team2_id }}" data-no-submit="1">{{ placement_match.team2.name }}</button>
+            </div>
+            <input type="hidden" name="winner_{{ placement_match.id }}" id="winner_input_{{ placement_match.id }}" value="{{ placement_match.winner_id or '' }}">
+            <button class="btn btn-outline-primary">Update or Reset Bronze Result</button>
+          </form>
         </div>
       {% else %}
-        <form method="post" class="card mt-4 p-3" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+        <form method="post" class="card mt-4 p-3" data-submit-on-clear="1" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
           <input type="hidden" name="action" value="results">
           <h5 class="mb-3">Bronze Placement Match</h5>
           <p class="mb-2"><strong>{{ placement_match.team1.name }}</strong> vs <strong>{{ placement_match.team2.name }}</strong></p>
@@ -121,7 +141,7 @@
 
   {% else %}
     <!-- Active Main Round Match Form -->
-    <form method="post" id="results" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+    <form method="post" id="results" data-submit-on-clear="1" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
       <input type="hidden" name="action" value="results">
       <div class="row g-3">
         {% for m in current_matches %}
@@ -163,7 +183,7 @@
 
     <!-- Bronze Placement Match (Active Round Form View) -->
     {% if placement_match and not placement_complete %}
-      <form method="post" class="card mt-4 p-3" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
+      <form method="post" class="card mt-4 p-3" data-submit-on-clear="1" action="{{ url_for('stage2', round_num=round_num, **{'class': current_class}) }}#results">
         <input type="hidden" name="action" value="results">
         <h5 class="mb-3">Bronze Placement Match</h5>
         <p class="mb-2"><strong>{{ placement_match.team1.name }}</strong> vs <strong>{{ placement_match.team2.name }}</strong></p>

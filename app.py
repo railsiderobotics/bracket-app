@@ -506,6 +506,53 @@ def check_rest_status(team):
     return False, int(remaining.total_seconds())
 
 
+def move_match_to_queue_bottom(match):
+    queued_orders = Match.query.with_entities(Match.queue_order).filter(
+        Match.bot_class == match.bot_class,
+        Match.is_bye == False,
+        Match.queue_status == 'queued',
+        Match.winner_id == None,
+        Match.id != match.id
+    ).all()
+    assigned_orders = [order for (order,) in queued_orders if order is not None and order >= 0]
+    unassigned_count = sum(1 for (order,) in queued_orders if order is None or order < 0)
+    match.queue_status = 'queued'
+    match.queue_order = max(assigned_orders, default=-1) + unassigned_count + 1
+
+
+def update_match_winner(match, winner_id, unlock_on_reset=False):
+    if winner_id == match.winner_id:
+        return False
+
+    if winner_id is not None:
+        if winner_id not in (match.team1_id, match.team2_id):
+            raise ValueError('Winner must be one of the bots in the match.')
+        now = datetime.utcnow()
+        if match.team1_id:
+            Team.query.get(match.team1_id).last_match_end_time = now
+        if match.team2_id:
+            Team.query.get(match.team2_id).last_match_end_time = now
+    elif match.winner_id is not None:
+        move_match_to_queue_bottom(match)
+        match.result_type = None
+        if unlock_on_reset:
+            match.locked = False
+
+    was_reset = match.winner_id is not None and winner_id is None
+    match.winner_id = winner_id
+    return was_reset
+
+
+def order_matches_by_queue(matches):
+    return sorted(matches, key=queue_order_sort_key)
+
+
+def queue_order_sort_key(match):
+    if match.queue_order is None or match.queue_order < 0:
+        return (1, 0, match.stage, match.round_num, match.slot_index, match.id)
+    return (0, match.queue_order, '', 0, 0, match.id)
+
+
 # ---------- dashboard & competitor routes ----------
 
 @app.route('/')
@@ -933,19 +980,26 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
             return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
         elif action == 'results':
             for m in matches_for(stage, round_num, bot_class=bot_class):
-                if m.is_bye:
+                winner_field = f'winner_{m.id}'
+                if m.is_bye or winner_field not in request.form:
                     continue
-                w = request.form.get(f'winner_{m.id}')
-                if w:
-                    new_winner_id = int(w)
-                    if m.winner_id != new_winner_id:
-                        now = datetime.utcnow()
-                        if m.team1_id:
-                            Team.query.get(m.team1_id).last_match_end_time = now
-                        if m.team2_id:
-                            Team.query.get(m.team2_id).last_match_end_time = now
-                    m.winner_id = new_winner_id
-                m.result_type = request.form.get(f'result_type_{m.id}') or None
+                winner_value = request.form.get(winner_field, '')
+                try:
+                    new_winner_id = int(winner_value) if winner_value else None
+                except ValueError:
+                    db.session.rollback()
+                    flash('Invalid winner selection. No results saved.', 'error')
+                    return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
+                if new_winner_id is not None and new_winner_id not in (m.team1_id, m.team2_id):
+                    db.session.rollback()
+                    flash('Winner must be one of the bots in the match. No results saved.', 'error')
+                    return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
+
+                was_reset = update_match_winner(m, new_winner_id)
+                if was_reset:
+                    m.result_type = None
+                else:
+                    m.result_type = request.form.get(f'result_type_{m.id}') or None
             cache.clear()
             db.session.commit()
             return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
@@ -963,6 +1017,8 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
     round1_ready = round_complete('s1_r1', 1, bot_class) if stage == 's1_r2' else True
 
     matches = matches_for(stage, round_num, bot_class=bot_class)
+    if locked:
+        matches = order_matches_by_queue(matches)
     all_active = active_teams(bot_class)
     extra_context = {}
     if stage == 's1_r2':
@@ -1118,43 +1174,39 @@ def stage2(round_num):
             else:
                 regular_matches = save_matches
 
-            # Process regular round matches and placement matches (these come from the same form inputs)
-            for m in regular_matches + placement_matches:
+            results_matches = regular_matches + placement_matches
+            if final_match:
+                results_matches.append(final_match)
+            for m in results_matches:
                 if m.is_bye:
                     continue
-                w = request.form.get(f'winner_{m.id}')
-                if w:
-                    try:
-                        new_winner_id = int(w)
-                    except ValueError:
-                        continue
-                    if m.winner_id != new_winner_id:
-                        now = datetime.utcnow()
-                        if m.team1_id:
-                            Team.query.get(m.team1_id).last_match_end_time = now
-                        if m.team2_id:
-                            Team.query.get(m.team2_id).last_match_end_time = now
-                    m.winner_id = new_winner_id
+                winner_field = f'winner_{m.id}'
+                if winner_field not in request.form:
+                    continue
+                winner_value = request.form.get(winner_field, '')
+                try:
+                    new_winner_id = int(winner_value) if winner_value else None
+                except ValueError:
+                    db.session.rollback()
+                    flash('Invalid winner selection. No results saved.', 'error')
+                    return redirect(url_for('stage2', round_num=round_num,
+                                            **{'class': bot_class}) + '#results')
+                if new_winner_id is not None and new_winner_id not in (m.team1_id, m.team2_id):
+                    db.session.rollback()
+                    flash('Winner must be one of the bots in the match. No results saved.', 'error')
+                    return redirect(url_for('stage2', round_num=round_num,
+                                            **{'class': bot_class}) + '#results')
+
+                update_match_winner(
+                    m,
+                    new_winner_id,
+                    unlock_on_reset=(m is final_match or m in placement_matches)
+                )
                 m.result_type = None
 
             # Process final match separately to avoid mixing it with other rounds
-            if final_match and not final_match.is_bye:
-                w = request.form.get(f'winner_{final_match.id}')
-                if w:
-                    try:
-                        new_winner_id = int(w)
-                    except ValueError:
-                        new_winner_id = None
-                    if new_winner_id:
-                        if final_match.winner_id != new_winner_id:
-                            now = datetime.utcnow()
-                            if final_match.team1_id:
-                                Team.query.get(final_match.team1_id).last_match_end_time = now
-                            if final_match.team2_id:
-                                Team.query.get(final_match.team2_id).last_match_end_time = now
-                        final_match.winner_id = new_winner_id
-                        final_match.result_type = None
-                        final_match.locked = True
+            if final_match and final_match.winner_id:
+                final_match.locked = True
 
             # Lock any placement matches with a winner
             for m in placement_matches:
@@ -1223,7 +1275,7 @@ def stage2(round_num):
         all_rounds[r] = matches_for('s2', r, bot_class)
         r += 1
 
-    current = matches_for('s2', round_num, bot_class)
+    current = order_matches_by_queue(matches_for('s2', round_num, bot_class))
     current_generated = bool(current)
     current_locked = round_locked('s2', round_num, bot_class) if current else False
     next_generated = round_generated('s2', round_num + 1, bot_class)
@@ -1259,7 +1311,8 @@ def stage2(round_num):
 
 def upcoming_queue_items(bot_class):
     queued_raw = Match.query.filter_by(bot_class=bot_class, queue_status='queued', winner_id=None)\
-                            .order_by(Match.queue_order.asc()).all()
+                            .all()
+    queued_raw = sorted(queued_raw, key=queue_order_sort_key)
     return [{
         'match': match,
         'both_rested': (
@@ -1290,12 +1343,7 @@ def queue():
                 db.session.commit()
 
         elif action == 'requeue_bottom' and m:
-            max_order_match = Match.query.filter_by(bot_class=current_class, queue_status='queued')\
-                                         .order_by(Match.queue_order.desc()).first()
-            next_order = (max_order_match.queue_order + 1) if max_order_match else 0
-            
-            m.queue_status = 'queued'
-            m.queue_order = next_order
+            move_match_to_queue_bottom(m)
             m.winner_id = None
             m.locked = False
             m.result_type = None
@@ -1309,14 +1357,15 @@ def queue():
             db.session.commit()
 
         elif action == 'auto_fill_queue':
-            unassigned = Match.query.filter(
+            queued = Match.query.filter(
                 Match.bot_class == current_class,
                 Match.is_bye == False,
                 Match.winner_id == None,
                 Match.queue_status == 'queued'
-            ).order_by(Match.stage, Match.round_num, Match.slot_index).all()
+            ).all()
+            queued = sorted(queued, key=queue_order_sort_key)
 
-            for idx, match in enumerate(unassigned):
+            for idx, match in enumerate(queued):
                 match.queue_order = idx
             cache.clear()
             db.session.commit()
@@ -1353,11 +1402,36 @@ def queue_overlay():
 @app.route('/api/reorder_queue', methods=['POST'])
 @login_required
 def reorder_queue():
-    order_data = request.json.get('order', [])
-    for position, match_id in enumerate(order_data):
-        m = Match.query.get(match_id)
-        if m:
-            m.queue_order = position
+    payload = request.get_json()
+    if not isinstance(payload, dict) or not isinstance(payload.get('order'), list):
+        return jsonify({'status': 'error', 'message': 'A queue order is required.'}), 400
+
+    current_class = current_selected_class('3lb')
+    queued_matches = Match.query.filter_by(
+        bot_class=current_class, queue_status='queued', winner_id=None
+    ).all()
+    queued_by_id = {
+        match.id: match
+        for match in sorted(queued_matches, key=queue_order_sort_key)
+    }
+    order_data = payload['order']
+    ordered_matches = []
+    seen_ids = set()
+    for match_id in order_data:
+        try:
+            match_id = int(match_id)
+        except (TypeError, ValueError):
+            continue
+        match = queued_by_id.get(match_id)
+        if match and match_id not in seen_ids:
+            ordered_matches.append(match)
+            seen_ids.add(match_id)
+
+    for match in queued_by_id.values():
+        if match.id not in seen_ids:
+            ordered_matches.append(match)
+    for position, match in enumerate(ordered_matches):
+        match.queue_order = position
     cache.clear()
     db.session.commit()
     return jsonify({'status': 'success'})

@@ -118,13 +118,14 @@
       if (action === 'winner') {
         var input = document.getElementById('winner_input_' + matchId);
         if (!input) return;
-        input.value = value;
+        var clearingWinner = input.value === value;
+        input.value = clearingWinner ? '' : value;
         document.querySelectorAll('.winner-toggle[data-match-id="' + matchId + '"]').forEach(function(el) {
           el.classList.remove('active');
         });
-        btn.classList.add('active');
+        if (!clearingWinner) btn.classList.add('active');
         var form = btn.closest('form');
-        if (form && !btn.dataset.noSubmit) form.submit();
+        if (form && (!btn.dataset.noSubmit || (clearingWinner && form.dataset.submitOnClear))) form.submit();
       }
       if (action === 'result') {
         var input = document.getElementById('result_type_input_' + matchId);

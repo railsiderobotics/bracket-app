@@ -51,7 +51,7 @@ class Match(db.Model):
 
     # Queue Management Fields
     queue_status = db.Column(db.String(20), default='queued')
-    queue_order = db.Column(db.Integer, default=0)
+    queue_order = db.Column(db.Integer, default=-1)
 
     team1 = db.relationship('Team', foreign_keys=[team1_id])
     team2 = db.relationship('Team', foreign_keys=[team2_id])

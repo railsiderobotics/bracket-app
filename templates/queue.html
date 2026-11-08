@@ -172,7 +172,7 @@
       animation: 150,
       onEnd: function () {
         const order = Array.from(el.querySelectorAll('li')).map(item => item.dataset.id).filter(Boolean);
-        fetch("{{ url_for('reorder_queue') }}", {
+        fetch("{{ url_for('reorder_queue', **{'class': current_class}) }}", {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ order: order })
