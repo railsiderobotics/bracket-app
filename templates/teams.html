@@ -45,7 +45,7 @@
 </div>
 
 <table class="table table-bordered bg-white">
-  <thead><tr><th>Bot Name</th><th>Assigned Team</th><th>Pit Table</th><th>Registration Fee</th><th>Waiver/Check In</th><th>Weigh-In</th><th>Safety</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Bot Name</th><th>Assigned Team</th><th>Pit Table</th><th>Notes</th><th>Registration Fee</th><th>Waiver/Check In</th><th>Weigh-In</th><th>Safety</th><th>Actions</th></tr></thead>
   <tbody>
   {% for t in teams %}
     <tr>
@@ -61,6 +61,9 @@
       </td>
       <td>
           <input type="text" name="pit_table_number_{{ t.id }}" class="form-control" value="{{ t.pit_table_number or '' }}">
+      </td>
+      <td>
+          <input type="text" name="notes_{{ t.id }}" class="form-control" value="{{ t.notes or '' }}" maxlength="255" placeholder="Notes">
       </td>
       <td class="text-center align-middle">
           <input class="form-check-input" type="checkbox" name="registration_fee_{{ t.id }}" id="registration_fee_{{ t.id }}" {% if t.registration_fee %}checked{% endif %} onchange="this.form.submit()">

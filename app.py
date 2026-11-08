@@ -142,6 +142,8 @@ with app.app_context():
             db.session.execute(text('ALTER TABLE team ADD COLUMN safety BOOLEAN DEFAULT FALSE'))
         if 'pit_table_number' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN pit_table_number VARCHAR(20)'))
+        if 'notes' not in team_columns:
+            db.session.execute(text("ALTER TABLE team ADD COLUMN notes VARCHAR(255) NOT NULL DEFAULT ''"))
         if 'last_match_end_time' not in team_columns:
             db.session.execute(text('ALTER TABLE team ADD COLUMN last_match_end_time TIMESTAMP'))
         if 'extension_used' not in team_columns:
@@ -157,8 +159,9 @@ with app.app_context():
         if 'queue_order' not in match_columns:
             db.session.execute(text('ALTER TABLE match ADD COLUMN queue_order INTEGER DEFAULT 0'))
         db.session.commit()
-    except Exception as e:
+    except Exception:
         db.session.rollback()
+        raise
 
     existing_settings = {row.key for row in TournamentSetting.query.all()}
     for cls in BOT_CLASSES:
@@ -804,6 +807,7 @@ def teams():
                     bot_name = request.form.get(f'bot_name_{t.id}')
                     assigned_team_name = request.form.get(f'assigned_team_name_{t.id}')
                     pit_table_number = request.form.get(f'pit_table_number_{t.id}')
+                    notes = request.form.get(f'notes_{t.id}')
                     registration_fee = bool(request.form.get(f'registration_fee_{t.id}'))
                     waiver_check_in = bool(request.form.get(f'waiver_check_in_{t.id}'))
                     weigh_in = bool(request.form.get(f'weigh_in_{t.id}'))
@@ -825,6 +829,8 @@ def teams():
                         t.assigned_team_name = assigned_team_name
                     if pit_table_number is not None:
                         t.pit_table_number = pit_table_number.strip() or None
+                    if notes is not None:
+                        t.notes = notes.strip()
                     t.registration_fee = registration_fee
                     t.waiver_check_in = waiver_check_in
                     t.weigh_in = weigh_in

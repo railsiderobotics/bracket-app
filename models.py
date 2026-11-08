@@ -16,6 +16,7 @@ class Team(db.Model):
     weigh_in = db.Column(db.Boolean, default=False)
     safety = db.Column(db.Boolean, default=False)
     pit_table_number = db.Column(db.String(20), nullable=True)
+    notes = db.Column(db.String(255), nullable=False, default='')
     dropped = db.Column(db.Boolean, default=False)
     
     # 20-Minute Rest Timer Fields
