@@ -35,7 +35,7 @@
       position: relative;
       display: grid;
       grid-template-columns: repeat(var(--round-count), minmax(0, 1fr));
-      height: max(68vh, {{ bracket[0].matches|length * 92 }}px);
+      height: max(68vh, {{ (bracket[0].matches|length * 92) if bracket else 0 }}px);
       min-height: 420px;
       isolation: isolate;
     }

@@ -85,7 +85,8 @@
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('competitor_results') }}">Match Results</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('admin_timers') }}">⏱️ Repair Manager</a>
           <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('settings') }}" title="Global Tournament Settings">⚙️ Settings</a>
-          <form action="{{ url_for('reset_tournament') }}" method="post" class="m-0">
+          <form action="{{ url_for('reset_tournament') }}" method="post" class="m-0"
+                data-confirm="Reset the whole tournament? This deletes every match and result in every class (bots are kept). This can't be undone.">
             <button type="submit" class="btn btn-outline-danger btn-sm">Reset Tournament</button>
           </form>
           <a class="btn btn-secondary btn-sm" href="{{ url_for('logout') }}">Logout</a>
@@ -108,6 +109,11 @@
     {% block content %}{% endblock %}
   </div>
   <script>
+    // Forms with data-confirm="..." ask before submitting (destructive buttons).
+    document.addEventListener('submit', function(event) {
+      var message = event.target.dataset.confirm;
+      if (message && !window.confirm(message)) event.preventDefault();
+    });
     document.addEventListener('click', function(event) {
       var btn = event.target.closest('.winner-toggle, .result-type-toggle');
       if (!btn) return;

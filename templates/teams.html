@@ -37,7 +37,7 @@
       <button class="btn btn-secondary" type="submit">Bulk Add Bots</button>
     </div>
   </form>
-  <form method="post" class="m-0">
+  <form method="post" class="m-0" data-confirm="Delete ALL {{ CLASS_LABELS[current_class] }} bots and every one of their matches? This can't be undone.">
     <input type="hidden" name="action" value="clear_all">
     <input type="hidden" name="bot_class" value="{{ current_class }}">
     <button class="btn btn-outline-danger">Clear All {{ CLASS_LABELS[current_class] }}</button>
@@ -80,7 +80,7 @@
       <td class="d-flex gap-2 align-items-center">
           <button class="btn btn-sm btn-outline-primary" type="submit">Update</button>
         </form>
-        <form method="post" class="m-0">
+        <form method="post" class="m-0" data-confirm="Delete {{ t.name }} and all of its matches? This can't be undone.">
           <input type="hidden" name="action" value="delete">
           <input type="hidden" name="team_id" value="{{ t.id }}">
           <button class="btn btn-sm btn-outline-danger">Delete</button>

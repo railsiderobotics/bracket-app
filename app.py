@@ -2,7 +2,7 @@ import math
 import os
 import random
 import hmac
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from flask_limiter import Limiter
@@ -56,6 +56,11 @@ if database_url:
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or ('sqlite:///' + os.path.join(BASEDIR, 'bracket.db'))
 app.config['SECRET_KEY'] = SECRET_KEY
+# The admin login lives in the session cookie. SameSite=Lax stops other websites from
+# submitting forms (e.g. Reset Tournament) with it; Secure keeps it HTTPS-only on Render
+# (Render sets the RENDER env var) while still allowing plain-http local testing.
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('RENDER'))
 db.init_app(app)
 
 STAGE1_ROUNDS = ['s1_r1', 's1_r2']
@@ -72,6 +77,45 @@ CLASS_LABELS = {
     '1lb': '1lb Antweights',
     '1lb_plant': '1lb PLANT',
 }
+# Rounds that are drawn from a given round's results. Once one of these exists, the
+# earlier round is treated as locked.
+NEXT_STAGES = {
+    's1_r1': ('s1_r2',),
+    's1_r2': ('decider', 's2'),
+    'decider': ('s2',),
+}
+REST_PERIOD = timedelta(minutes=20)
+
+
+def utcnow():
+    """Naive UTC timestamp (what the DB columns store); avoids deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def parse_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_by_id(model, value):
+    """Look up a row from a form/query value; None if the id is missing or not a number."""
+    row_id = parse_id(value)
+    return db.session.get(model, row_id) if row_id is not None else None
+
+
+def form_value_changed(name):
+    """True if a submitted form value differs from the value the page was rendered with.
+
+    Result forms send every match on the page, plus an orig_<name> copy of each value as it
+    was when the page loaded. Skipping untouched values stops a stale page (another device,
+    another tab, or the back button) from wiping results entered since it was loaded.
+    """
+    orig_name = f'orig_{name}'
+    if orig_name not in request.form:
+        return True
+    return request.form.get(name, '') != request.form.get(orig_name, '')
 
 # ---------- Auth Helpers & Context ----------
 
@@ -292,12 +336,23 @@ def lock_stage2_prereqs(bot_class=None):
     db.session.commit()
 
 
-def create_round_matches(stage, team_ids, round_num=1, bot_class='3lb', rng=None):
+def later_round_generated(stage, bot_class):
+    """True once a round drawn from this round's results exists (see NEXT_STAGES)."""
+    return any(round_generated(nxt, 1, bot_class) for nxt in NEXT_STAGES.get(stage, ()))
+
+
+def stage1_bye_ids(bot_class):
+    """Bots that already got a bye in Stage 1 (Round 1 or Round 2)."""
+    return {m.team1_id for stage in STAGE1_ROUNDS
+            for m in matches_for(stage, 1, bot_class=bot_class) if m.is_bye and m.team1_id}
+
+
+def create_round_matches(stage, team_ids, round_num=1, bot_class='3lb', rng=None, excluded_bye_ids=None):
     Match.query.filter_by(stage=stage, round_num=round_num, bot_class=bot_class).delete()
     shuffled_ids = list(team_ids)
     random.shuffle(shuffled_ids)
-    
-    pairs, bye = random_pairs(shuffled_ids, rng=rng)
+
+    pairs, bye = random_pairs(shuffled_ids, rng=rng, excluded_bye_ids=excluded_bye_ids)
     for i, (a, b) in enumerate(pairs):
         db.session.add(Match(stage=stage, round_num=round_num, slot_index=i,
                               team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
@@ -315,15 +370,20 @@ def create_stage1_round2_matches(bot_class):
     round1_byes = {m.team1_id for m in matches_for('s1_r1', 1, bot_class=bot_class) if m.is_bye and m.team1_id}
     
     winners, losers = stage1_round1_groups(bot_class)
+    # slot_index keeps counting across both groups so every Round 2 match gets its own number
+    # (it used to restart at 0 for the losers group, interleaving the two groups).
+    slot = 0
     for group in (winners, losers):
         pairs, bye = random_pairs(group, excluded_bye_ids=round1_byes)
-        for i, (a, b) in enumerate(pairs):
-            db.session.add(Match(stage='s1_r2', round_num=1, slot_index=i,
+        for a, b in pairs:
+            db.session.add(Match(stage='s1_r2', round_num=1, slot_index=slot,
                                   team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
+            slot += 1
         if bye is not None:
-            db.session.add(Match(stage='s1_r2', round_num=1, slot_index=len(pairs),
+            db.session.add(Match(stage='s1_r2', round_num=1, slot_index=slot,
                                   team1_id=bye, team2_id=None, bot_class=bot_class, is_bye=True,
                                   winner_id=bye, locked=True))
+            slot += 1
     lock_stage1_round1(bot_class)
     cache.clear()
     db.session.commit()
@@ -439,7 +499,11 @@ def current_selected_class(default='3lb'):
 def stage2_bracket_data(bot_class=None):
     round1 = matches_for('s2', 1, bot_class=bot_class)
     if not round1:
-        count = len(active_teams(bot_class))
+        # Preview size: the real qualifier count once Stage 1 is done, otherwise every bot.
+        if class_stage2_ready(bot_class):
+            count = len(stage2_qualifiers(bot_class))
+        else:
+            count = len(active_teams(bot_class))
         if count == 0:
             return None
         slot_count = next_pow2(count)
@@ -483,8 +547,8 @@ def stage2_bracket_data(bot_class=None):
             a = winners[i]
             b = winners[i + 1] if i + 1 < len(winners) else None
             placeholders.append({
-                'team1': Team.query.get(a) if a else None,
-                'team2': Team.query.get(b) if b else None,
+                'team1': db.session.get(Team, a) if a else None,
+                'team2': db.session.get(Team, b) if b else None,
                 'winner': a if (b is None and a is not None and r == 1) else None,
                 'generated': False,
                 'is_bye': False,
@@ -498,26 +562,35 @@ def check_rest_status(team):
     """Returns (is_ready, remaining_seconds) for a 20-minute rest window."""
     if not team or not team.last_match_end_time:
         return True, 0
-    elapsed = datetime.utcnow() - team.last_match_end_time
-    required_rest = timedelta(minutes=20)
-    if elapsed >= required_rest:
+    elapsed = utcnow() - team.last_match_end_time
+    if elapsed >= REST_PERIOD:
         return True, 0
-    remaining = required_rest - elapsed
+    remaining = REST_PERIOD - elapsed
     return False, int(remaining.total_seconds())
 
 
 def move_match_to_queue_bottom(match):
-    queued_orders = Match.query.with_entities(Match.queue_order).filter(
+    """Put a match at the very end of its class's upcoming queue.
+
+    Matches that were never dragged have queue_order -1 and sort after numbered ones, so a
+    plain "max + 1" could land a re-queued match at the TOP. Numbering the whole queue in
+    its current order first guarantees the match really ends up last.
+    """
+    others = Match.query.filter(
         Match.bot_class == match.bot_class,
         Match.is_bye == False,
         Match.queue_status == 'queued',
         Match.winner_id == None,
         Match.id != match.id
     ).all()
-    assigned_orders = [order for (order,) in queued_orders if order is not None and order >= 0]
-    unassigned_count = sum(1 for (order,) in queued_orders if order is None or order < 0)
+    for position, other in enumerate(sorted(others, key=queue_order_sort_key)):
+        other.queue_order = position
     match.queue_status = 'queued'
-    match.queue_order = max(assigned_orders, default=-1) + unassigned_count + 1
+    match.queue_order = len(others)
+
+
+def current_in_progress(bot_class):
+    return Match.query.filter_by(bot_class=bot_class, queue_status='in_progress', winner_id=None).first()
 
 
 def update_match_winner(match, winner_id, unlock_on_reset=False):
@@ -527,11 +600,16 @@ def update_match_winner(match, winner_id, unlock_on_reset=False):
     if winner_id is not None:
         if winner_id not in (match.team1_id, match.team2_id):
             raise ValueError('Winner must be one of the bots in the match.')
-        now = datetime.utcnow()
-        if match.team1_id:
-            Team.query.get(match.team1_id).last_match_end_time = now
-        if match.team2_id:
-            Team.query.get(match.team2_id).last_match_end_time = now
+        if match.winner_id is None:
+            # First result for this match: start both bots' repair timers. Fixing a
+            # mis-clicked winner later doesn't restart them.
+            now = utcnow()
+            for tid in (match.team1_id, match.team2_id):
+                team = db.session.get(Team, tid) if tid else None
+                if team:
+                    team.last_match_end_time = now
+        # A finished match leaves the queue, even if nobody pressed "Move to Results Queue".
+        match.queue_status = 'completed'
     elif match.winner_id is not None:
         move_match_to_queue_bottom(match)
         match.result_type = None
@@ -551,6 +629,32 @@ def queue_order_sort_key(match):
     if match.queue_order is None or match.queue_order < 0:
         return (1, 0, match.stage, match.round_num, match.slot_index, match.id)
     return (0, match.queue_order, '', 0, 0, match.id)
+
+
+def generate_stage2_round1(bot_class):
+    """Seed the Stage 2 bracket for a class. Returns an error message, or None on success."""
+    if not class_stage2_ready(bot_class):
+        return 'Finish Stage 1 and the decider round before generating the Stage 2 bracket.'
+    qualifiers = stage2_qualifiers(bot_class)
+    if len(qualifiers) < 2:
+        return (f'Stage 2 needs at least 2 qualified bots; {CLASS_LABELS[bot_class]} '
+                f'has {len(qualifiers)}.')
+    slots = build_bracket_slots(qualifiers)
+    Match.query.filter_by(stage='s2', bot_class=bot_class).delete()
+    Match.query.filter_by(stage='s2_placement', bot_class=bot_class).delete()
+    for i, (a, b) in enumerate(round_pairs_from_slots(slots)):
+        if a is None or b is None:
+            real = a if a is not None else b
+            db.session.add(Match(stage='s2', round_num=1, slot_index=i,
+                                  team1_id=real, team2_id=None, bot_class=bot_class, is_bye=True,
+                                  winner_id=real, locked=True))
+        else:
+            db.session.add(Match(stage='s2', round_num=1, slot_index=i,
+                                  team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
+    cache.clear()
+    db.session.commit()
+    lock_stage2_prereqs(bot_class)
+    return None
 
 
 # ---------- dashboard & competitor routes ----------
@@ -594,9 +698,9 @@ def competitor_dashboard():
     current_class = current_selected_class('3lb')
     enabled = enabled_classes()
 
-    in_progress = Match.query.filter_by(bot_class=current_class, queue_status='in_progress').first()
-    queued_matches = Match.query.filter_by(bot_class=current_class, queue_status='queued', winner_id=None)\
-                               .order_by(Match.queue_order.asc()).all()
+    in_progress = current_in_progress(current_class)
+    # Same order as the admin queue and the overlay (un-dragged matches go last, not first).
+    queued_matches = [item['match'] for item in upcoming_queue_items(current_class)]
     bracket = stage2_bracket_data(current_class)
     placement_match = stage2_placement_match(current_class)
     champion = None
@@ -608,7 +712,7 @@ def competitor_dashboard():
             if isinstance(final_match, Match) and final_match.winner_id:
                 champion = final_match.winner
             elif isinstance(final_match, dict) and final_match.get('winner'):
-                champion = Team.query.get(final_match.get('winner'))
+                champion = db.session.get(Team, final_match.get('winner'))
 
     return render_template('competitor_dashboard.html',
                            in_progress=in_progress,
@@ -622,7 +726,11 @@ def competitor_dashboard():
 
 
 @app.route('/standings')
-@cache.cached(timeout=15, query_string=True)  # Cache public standings view for 15 seconds
+# Cache the public standings page for 15 seconds. Admins (and anyone with a pending flash
+# message) skip the cache, so the admin navbar or someone else's message is never cached
+# and served to the public.
+@cache.cached(timeout=15, query_string=True,
+              unless=lambda: bool(session.get('authenticated') or session.get('_flashes')))
 def standings():
     current_class = request.args.get('class', '3lb')
     enabled = enabled_classes()
@@ -752,15 +860,18 @@ def admin_timers():
 
     if request.method == 'POST':
         action = request.form.get('action')
-        team_id = request.form.get('team_id')
-        t = Team.query.get(team_id) if team_id else None
+        t = get_by_id(Team, request.form.get('team_id'))
 
         if t:
             if action == 'grant_extension' and not t.extension_used:
-                if t.last_match_end_time:
-                    t.last_match_end_time += timedelta(minutes=20)
-                else:
-                    t.last_match_end_time = datetime.utcnow() - timedelta(minutes=20) + timedelta(minutes=20)
+                # Add 20 minutes to whatever repair time is left. A timer that already ran
+                # out (or never started) counts as 0 left, so the extension is always a
+                # full 20 minutes instead of being silently wasted.
+                expired_start = utcnow() - REST_PERIOD
+                rest_start = t.last_match_end_time
+                if rest_start is None or rest_start < expired_start:
+                    rest_start = expired_start
+                t.last_match_end_time = rest_start + REST_PERIOD
                 t.extension_used = True
                 cache.clear()
                 db.session.commit()
@@ -847,55 +958,51 @@ def teams():
             if skipped:
                 flash('Bulk add skipped: ' + '; '.join(skipped), 'error')
         elif action == 'edit':
-            tid = request.form.get('team_id')
-            if tid:
-                t = Team.query.get(int(tid))
-                if t:
-                    bot_name = request.form.get(f'bot_name_{t.id}')
-                    assigned_team_name = request.form.get(f'assigned_team_name_{t.id}')
-                    pit_table_number = request.form.get(f'pit_table_number_{t.id}')
-                    notes = request.form.get(f'notes_{t.id}')
-                    registration_fee = bool(request.form.get(f'registration_fee_{t.id}'))
-                    waiver_check_in = bool(request.form.get(f'waiver_check_in_{t.id}'))
-                    weigh_in = bool(request.form.get(f'weigh_in_{t.id}'))
-                    safety = bool(request.form.get(f'safety_{t.id}'))
-                    bot_class_value = request.form.get(f'bot_class_{t.id}', t.bot_class)
-                    if bot_class_value not in BOT_CLASSES:
-                        bot_class_value = t.bot_class
-                    if bot_name is not None and assigned_team_name is not None:
-                        bot_name = bot_name.strip()
-                        assigned_team_name = assigned_team_name.strip()
-                        if not bot_name or not assigned_team_name:
-                            flash('Bot name and assigned team name are required.', 'error')
-                            return redirect(url_for('teams', **{'class': bot_class}))
-                        duplicate = Team.query.filter(Team.name == bot_name, Team.id != t.id).first()
-                        if duplicate:
-                            flash(f'Bot "{bot_name}" already exists.', 'error')
-                            return redirect(url_for('teams', **{'class': bot_class}))
-                        t.name = bot_name
-                        t.assigned_team_name = assigned_team_name
-                    if pit_table_number is not None:
-                        t.pit_table_number = pit_table_number.strip() or None
-                    if notes is not None:
-                        t.notes = notes.strip()
-                    t.registration_fee = registration_fee
-                    t.waiver_check_in = waiver_check_in
-                    t.weigh_in = weigh_in
-                    t.safety = safety
-                    t.bot_class = bot_class_value
-                    cache.clear()
-                    db.session.commit()
+            t = get_by_id(Team, request.form.get('team_id'))
+            if t:
+                bot_name = request.form.get(f'bot_name_{t.id}')
+                assigned_team_name = request.form.get(f'assigned_team_name_{t.id}')
+                pit_table_number = request.form.get(f'pit_table_number_{t.id}')
+                notes = request.form.get(f'notes_{t.id}')
+                registration_fee = bool(request.form.get(f'registration_fee_{t.id}'))
+                waiver_check_in = bool(request.form.get(f'waiver_check_in_{t.id}'))
+                weigh_in = bool(request.form.get(f'weigh_in_{t.id}'))
+                safety = bool(request.form.get(f'safety_{t.id}'))
+                bot_class_value = request.form.get(f'bot_class_{t.id}', t.bot_class)
+                if bot_class_value not in BOT_CLASSES:
+                    bot_class_value = t.bot_class
+                if bot_name is not None and assigned_team_name is not None:
+                    bot_name = bot_name.strip()
+                    assigned_team_name = assigned_team_name.strip()
+                    if not bot_name or not assigned_team_name:
+                        flash('Bot name and assigned team name are required.', 'error')
+                        return redirect(url_for('teams', **{'class': bot_class}))
+                    duplicate = Team.query.filter(Team.name == bot_name, Team.id != t.id).first()
+                    if duplicate:
+                        flash(f'Bot "{bot_name}" already exists.', 'error')
+                        return redirect(url_for('teams', **{'class': bot_class}))
+                    t.name = bot_name
+                    t.assigned_team_name = assigned_team_name
+                if pit_table_number is not None:
+                    t.pit_table_number = pit_table_number.strip() or None
+                if notes is not None:
+                    t.notes = notes.strip()
+                t.registration_fee = registration_fee
+                t.waiver_check_in = waiver_check_in
+                t.weigh_in = weigh_in
+                t.safety = safety
+                t.bot_class = bot_class_value
+                cache.clear()
+                db.session.commit()
         elif action == 'delete':
-            tid = request.form.get('team_id')
-            if tid:
-                t = Team.query.get(int(tid))
-                if t:
-                    Match.query.filter(or_(Match.team1_id == t.id,
-                                            Match.team2_id == t.id,
-                                            Match.winner_id == t.id)).delete(synchronize_session=False)
-                    db.session.delete(t)
-                    cache.clear()
-                    db.session.commit()
+            t = get_by_id(Team, request.form.get('team_id'))
+            if t:
+                Match.query.filter(or_(Match.team1_id == t.id,
+                                        Match.team2_id == t.id,
+                                        Match.winner_id == t.id)).delete(synchronize_session=False)
+                db.session.delete(t)
+                cache.clear()
+                db.session.commit()
         elif action == 'clear_all':
             Match.query.filter_by(bot_class=bot_class).delete(synchronize_session=False)
             Team.query.filter_by(bot_class=bot_class).delete(synchronize_session=False)
@@ -940,86 +1047,121 @@ def round_view(stage, round_num, team_id_source, back_url, generate_func=None):
 
     if request.method == 'POST':
         action = request.form.get('action')
+        here = url_for(request.endpoint, **{'class': bot_class})
+        # Pairings can only change while the round is unlocked and nothing was drawn from it.
+        # The buttons are already hidden then; this also stops a stale page or double-submit.
+        pairings_frozen = (round_locked(stage, round_num, bot_class)
+                           or later_round_generated(stage, bot_class))
         if action == 'generate':
+            if pairings_frozen:
+                flash("This round is locked, so its pairings can't be re-drawn.", 'error')
+                return redirect(here)
+            if any(m.queue_status in ('in_progress', 'awaiting_results')
+                   for m in matches_for(stage, round_num, bot_class=bot_class)):
+                flash('A match from this round is in progress or awaiting results. '
+                      'Re-queue it before re-drawing the round.', 'error')
+                return redirect(here)
+            if stage == 's1_r2' and not round_complete('s1_r1', 1, bot_class):
+                flash('Finish Round 1 results before opening Round 2.', 'error')
+                return redirect(here)
+            if stage == 'decider' and not (round_complete('s1_r1', 1, bot_class)
+                                           and round_complete('s1_r2', 1, bot_class)):
+                flash('Finish Round 1 and Round 2 results before opening the decider round.', 'error')
+                return redirect(here)
             if generate_func:
-                if stage == 's1_r2' and not round_complete('s1_r1', 1, bot_class):
-                    flash('Finish Round 1 results before opening Round 2.', 'error')
-                    return redirect(url_for(request.endpoint, **{'class': bot_class}))
                 generate_func(bot_class)
             else:
                 ids = team_id_source(bot_class)
-                create_round_matches(stage, ids, round_num, bot_class=bot_class)
+                # A bot that already had a Stage 1 bye shouldn't get a free decider win too.
+                excluded = stage1_bye_ids(bot_class) if stage == 'decider' else None
+                create_round_matches(stage, ids, round_num, bot_class=bot_class,
+                                     excluded_bye_ids=excluded)
             cache.clear()
-            return redirect(url_for(request.endpoint, **{'class': bot_class}))
+            return redirect(here)
         elif action == 'save_edits':
+            if pairings_frozen:
+                flash("This round is locked, so its pairings can't be edited.", 'error')
+                return redirect(here)
             ms = matches_for(stage, round_num, bot_class=bot_class)
+            # Edits can only rearrange the bots already fighting in this round, so nobody gets
+            # dropped, doubled up, or pulled in from another bucket (e.g. a 2-0 bot in the decider).
+            pool = {tid for m in ms if not m.is_bye for tid in (m.team1_id, m.team2_id) if tid}
             assigned = set()
             groups = stage1_team_groups(bot_class) if stage == 's1_r2' else {}
+            new_pairs = []
             for m in ms:
                 if m.is_bye:
                     continue
-                t1 = int(request.form.get(f'team1_{m.id}'))
-                t2 = int(request.form.get(f'team2_{m.id}'))
-                if t1 == t2 or t1 in assigned or t2 in assigned:
-                    flash('Each bot must appear exactly once. No changes saved.', 'error')
-                    return redirect(url_for(request.endpoint, **{'class': bot_class}))
+                t1 = parse_id(request.form.get(f'team1_{m.id}'))
+                t2 = parse_id(request.form.get(f'team2_{m.id}'))
+                if (t1 is None or t2 is None or t1 == t2 or t1 in assigned or t2 in assigned
+                        or t1 not in pool or t2 not in pool):
+                    flash('Each bot in this round must appear exactly once. No changes saved.', 'error')
+                    return redirect(here)
                 if stage == 's1_r2' and groups.get(t1) != groups.get(t2):
                     flash('Round 2 pairings must match winners with winners and losers with losers.', 'error')
-                    return redirect(url_for(request.endpoint, **{'class': bot_class}))
-                assigned.add(t1)
-                assigned.add(t2)
+                    return redirect(here)
+                assigned.update((t1, t2))
+                new_pairs.append((m, t1, t2))
+            for m, t1, t2 in new_pairs:
                 m.team1_id, m.team2_id = t1, t2
             cache.clear()
             db.session.commit()
-            return redirect(url_for(request.endpoint, **{'class': bot_class}))
+            return redirect(here)
         elif action == 'lock':
             for m in matches_for(stage, round_num, bot_class=bot_class):
                 m.locked = True
             cache.clear()
             db.session.commit()
-            return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
+            return redirect(here + '#results')
         elif action == 'results':
+            winner_changed_any = False
             for m in matches_for(stage, round_num, bot_class=bot_class):
                 winner_field = f'winner_{m.id}'
+                type_field = f'result_type_{m.id}'
                 if m.is_bye or winner_field not in request.form:
                     continue
-                winner_value = request.form.get(winner_field, '')
-                try:
-                    new_winner_id = int(winner_value) if winner_value else None
-                except ValueError:
-                    db.session.rollback()
-                    flash('Invalid winner selection. No results saved.', 'error')
-                    return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
-                if new_winner_id is not None and new_winner_id not in (m.team1_id, m.team2_id):
-                    db.session.rollback()
-                    flash('Winner must be one of the bots in the match. No results saved.', 'error')
-                    return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
-
-                was_reset = update_match_winner(m, new_winner_id)
-                if was_reset:
-                    m.result_type = None
-                else:
-                    m.result_type = request.form.get(f'result_type_{m.id}') or None
+                winner_changed = form_value_changed(winner_field)
+                type_changed = type_field in request.form and form_value_changed(type_field)
+                if not winner_changed and not type_changed:
+                    continue  # untouched on this page; leave whatever is saved now
+                if winner_changed:
+                    winner_value = request.form.get(winner_field, '')
+                    try:
+                        new_winner_id = int(winner_value) if winner_value else None
+                    except ValueError:
+                        db.session.rollback()
+                        flash('Invalid winner selection. No results saved.', 'error')
+                        return redirect(here + '#results')
+                    if new_winner_id is not None and new_winner_id not in (m.team1_id, m.team2_id):
+                        db.session.rollback()
+                        flash('Winner must be one of the bots in the match. No results saved.', 'error')
+                        return redirect(here + '#results')
+                    if new_winner_id != m.winner_id:
+                        winner_changed_any = True
+                    if update_match_winner(m, new_winner_id):
+                        m.result_type = None
+                        continue
+                m.result_type = request.form.get(type_field) or None
+            if winner_changed_any and later_round_generated(stage, bot_class):
+                flash('Heads up: the next round was already drawn from these results. '
+                      'Check that its pairings still make sense.', 'info')
             cache.clear()
             db.session.commit()
-            return redirect(url_for(request.endpoint, **{'class': bot_class}) + '#results')
-        return redirect(url_for(request.endpoint, **{'class': bot_class}))
+            return redirect(here + '#results')
+        return redirect(here)
 
     generated = round_generated(stage, round_num, bot_class)
-    locked = round_locked(stage, round_num, bot_class)
+    locked = round_locked(stage, round_num, bot_class) or later_round_generated(stage, bot_class)
     complete = round_complete(stage, round_num, bot_class)
-    if stage == 's1_r1' and round_generated('s1_r2', 1, bot_class):
-        locked = True
-    if stage == 's1_r2' and round_generated('decider', 1, bot_class):
-        locked = True
-    if stage == 'decider' and round_generated('s2', 1, bot_class):
-        locked = True
     round1_ready = round_complete('s1_r1', 1, bot_class) if stage == 's1_r2' else True
 
     matches = matches_for(stage, round_num, bot_class=bot_class)
     if locked:
         matches = order_matches_by_queue(matches)
-    all_active = active_teams(bot_class)
+    # Pairing dropdowns only offer the bots already in this round (see save_edits).
+    round_team_ids = {tid for m in matches if not m.is_bye for tid in (m.team1_id, m.team2_id) if tid}
+    all_active = [t for t in active_teams(bot_class) if t.id in round_team_ids]
     extra_context = {}
     if stage == 's1_r2':
         extra_context['team_groups'] = stage1_team_groups(bot_class)
@@ -1068,28 +1210,11 @@ def stage2_bracket():
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'generate_round1':
-            try:
-                qualifiers = stage2_qualifiers(bot_class)
-            except Exception:
-                flash('Seeding fallback: using current ranking due to incomplete data.', 'info')
-                qualifiers = [stat['team'].id for stat in stage1_standings(bot_class)]
-            slots = build_bracket_slots(qualifiers)
-            Match.query.filter_by(stage='s2', bot_class=bot_class).delete()
-            Match.query.filter_by(stage='s2_placement', bot_class=bot_class).delete()
-            pairs = round_pairs_from_slots(slots)
-            for i, (a, b) in enumerate(pairs):
-                if a is None or b is None:
-                    real = a if a is not None else b
-                    db.session.add(Match(stage='s2', round_num=1, slot_index=i,
-                                          team1_id=real, team2_id=None, bot_class=bot_class, is_bye=True,
-                                          winner_id=real, locked=True))
-                else:
-                    db.session.add(Match(stage='s2', round_num=1, slot_index=i,
-                                          team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
-            cache.clear()
-            db.session.commit()
-            lock_stage2_prereqs(bot_class)
-            session[last_key] = 1
+            error = generate_stage2_round1(bot_class)
+            if error:
+                flash(error, 'error')
+            else:
+                session[last_key] = 1
         return redirect(url_for('stage2_bracket', **{'class': bot_class}))
 
     bracket = stage2_bracket_data(bot_class)
@@ -1107,7 +1232,7 @@ def stage2_bracket():
                 if final_match.team1 and final_match.team2:
                     second_place = final_match.team2 if final_match.winner_id == final_match.team1_id else final_match.team1
             elif isinstance(final_match, dict) and final_match.get('winner'):
-                champion = Team.query.get(final_match.get('winner'))
+                champion = db.session.get(Team, final_match.get('winner'))
     if placement_match and placement_match.winner_id:
         third_place = placement_match.winner
     return render_template('stage2_bracket.html', bracket=bracket,
@@ -1139,28 +1264,11 @@ def stage2(round_num):
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'generate_round1':
-            try:
-                qualifiers = stage2_qualifiers(bot_class)
-            except Exception:
-                flash('Seeding fallback: using current ranking due to incomplete data.', 'info')
-                qualifiers = [stat['team'].id for stat in stage1_standings(bot_class)]
-            slots = build_bracket_slots(qualifiers)
-            Match.query.filter_by(stage='s2', bot_class=bot_class).delete()
-            Match.query.filter_by(stage='s2_placement', bot_class=bot_class).delete()
-            pairs = round_pairs_from_slots(slots)
-            for i, (a, b) in enumerate(pairs):
-                if a is None or b is None:
-                    real = a if a is not None else b
-                    db.session.add(Match(stage='s2', round_num=1, slot_index=i,
-                                          team1_id=real, team2_id=None, bot_class=bot_class, is_bye=True,
-                                          winner_id=real, locked=True))
-                else:
-                    db.session.add(Match(stage='s2', round_num=1, slot_index=i,
-                                          team1_id=a, team2_id=b, bot_class=bot_class, locked=False))
-            cache.clear()
-            db.session.commit()
-            lock_stage2_prereqs(bot_class)
-            session[last_key] = 1
+            error = generate_stage2_round1(bot_class)
+            if error:
+                flash(error, 'error')
+            else:
+                session[last_key] = 1
         elif action == 'results':
             save_matches = matches_for('s2', round_num, bot_class=bot_class)
             placement_matches = matches_for('s2_placement', bot_class=bot_class)
@@ -1171,8 +1279,14 @@ def stage2(round_num):
             regular_matches = []
             if not next_exists and len(save_matches) == 1:
                 final_match = save_matches[0]
-            else:
+            elif not next_exists:
                 regular_matches = save_matches
+            elif any(f'winner_{m.id}' in request.form and form_value_changed(f'winner_{m.id}')
+                     for m in save_matches):
+                # These winners already advanced into the next round; changing one now would
+                # leave the bracket inconsistent.
+                flash(f'Round {round_num} results are locked because Round {round_num + 1} '
+                      'has been generated.', 'error')
 
             results_matches = regular_matches + placement_matches
             if final_match:
@@ -1181,8 +1295,8 @@ def stage2(round_num):
                 if m.is_bye:
                     continue
                 winner_field = f'winner_{m.id}'
-                if winner_field not in request.form:
-                    continue
+                if winner_field not in request.form or not form_value_changed(winner_field):
+                    continue  # not on this form, or untouched since the page loaded
                 winner_value = request.form.get(winner_field, '')
                 try:
                     new_winner_id = int(winner_value) if winner_value else None
@@ -1218,11 +1332,18 @@ def stage2(round_num):
             session[f'stage2_last_round_{bot_class}'] = round_num
         elif action == 'generate_next':
             prev = matches_for('s2', round_num, bot_class=bot_class)
+            next_round = round_num + 1
+            if round_generated('s2', next_round, bot_class):
+                # Already advanced (double-click or back button): don't rebuild the next
+                # round, which would wipe its results.
+                return redirect(url_for('stage2', round_num=next_round, **{'class': bot_class}))
+            if len(prev) < 2 or any(m.winner_id is None for m in prev):
+                flash('Enter every result in this round before advancing.', 'error')
+                return redirect(url_for('stage2', round_num=round_num, **{'class': bot_class}))
             for m in prev:
                 m.locked = True
             db.session.commit()
             winners = [m.winner_id for m in prev]
-            next_round = round_num + 1
             Match.query.filter_by(stage='s2', round_num=next_round, bot_class=bot_class).delete()
             for i in range(0, len(winners), 2):
                 a, b = winners[i], winners[i + 1]
@@ -1330,12 +1451,12 @@ def queue():
 
     if request.method == 'POST':
         action = request.form.get('action')
-        match_id = request.form.get('match_id')
-        m = Match.query.get(match_id) if match_id else None
+        m = get_by_id(Match, request.form.get('match_id'))
 
         if action == 'start_match' and m:
-            running = Match.query.filter_by(bot_class=current_class, queue_status='in_progress').first()
-            if running:
+            if m.is_bye or m.winner_id is not None or m.queue_status != 'queued':
+                flash('That match is no longer waiting in the queue.', 'error')
+            elif current_in_progress(m.bot_class):
                 flash('A match is already in progress. Finish or re-queue it first.', 'error')
             else:
                 m.queue_status = 'in_progress'
@@ -1343,15 +1464,26 @@ def queue():
                 db.session.commit()
 
         elif action == 'requeue_bottom' and m:
-            move_match_to_queue_bottom(m)
-            m.winner_id = None
-            m.locked = False
-            m.result_type = None
-            cache.clear()
-            db.session.commit()
-            flash(f'Match sent back to the bottom of the upcoming queue.', 'info')
+            if m.is_bye:
+                flash("Byes are automatic wins and can't be re-queued.", 'error')
+            elif (m.winner_id is not None and m.stage == 's2'
+                  and round_generated('s2', m.round_num + 1, m.bot_class)):
+                flash("This result already sent a bot into the next Stage 2 round, "
+                      "so the match can't be re-queued.", 'error')
+            else:
+                if m.winner_id is not None:
+                    # Same path as clearing a result on the round page: clears the winner and
+                    # result type and moves the match to the bottom. Stage 1 rounds stay locked
+                    # (unlocking flipped the round page back to pairing-edit mode); Stage 2
+                    # final/bronze matches unlock so a new result can be entered.
+                    update_match_winner(m, None, unlock_on_reset=m.stage in ('s2', 's2_placement'))
+                else:
+                    move_match_to_queue_bottom(m)
+                cache.clear()
+                db.session.commit()
+                flash('Match sent back to the bottom of the upcoming queue.', 'info')
 
-        elif action == 'finish_match' and m:
+        elif action == 'finish_match' and m and m.winner_id is None:
             m.queue_status = 'awaiting_results'
             cache.clear()
             db.session.commit()
@@ -1373,13 +1505,14 @@ def queue():
 
         return redirect(url_for('queue', **{'class': current_class}))
 
-    in_progress = Match.query.filter_by(bot_class=current_class, queue_status='in_progress').first()
+    in_progress = current_in_progress(current_class)
     queued_matches = upcoming_queue_items(current_class)
 
     awaiting_results = Match.query.filter_by(bot_class=current_class, queue_status='awaiting_results', winner_id=None)\
                                    .order_by(Match.id.desc()).all()
 
-    completed_matches = Match.query.filter(Match.bot_class == current_class, Match.winner_id != None)\
+    completed_matches = Match.query.filter(Match.bot_class == current_class, Match.winner_id != None,
+                                           Match.is_bye == False)\
                                    .order_by(Match.id.desc()).all()
 
     return render_template('queue.html',
@@ -1402,7 +1535,7 @@ def queue_overlay():
 @app.route('/api/reorder_queue', methods=['POST'])
 @login_required
 def reorder_queue():
-    payload = request.get_json()
+    payload = request.get_json(silent=True)
     if not isinstance(payload, dict) or not isinstance(payload.get('order'), list):
         return jsonify({'status': 'error', 'message': 'A queue order is required.'}), 400
 

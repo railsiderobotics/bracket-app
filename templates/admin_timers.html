@@ -32,7 +32,7 @@
           {% if item.is_ready %}
             <span class="badge bg-success">Ready</span>
           {% else %}
-            <span class="badge bg-warning text-dark">Repairing (<span class="countdown-timer" data-seconds="{{ item.remaining_seconds }}">{{ item.remaining_seconds // 60 }}m {{ item.remaining_seconds % 60 }}s</span>)</span>
+            <span class="badge bg-warning text-dark">Repairing (<span class="countdown-timer" data-seconds="{{ item.remaining_seconds }}">{{ item.remaining_seconds // 60 }}m {{ '%02d'|format(item.remaining_seconds % 60) }}s</span>)</span>
           {% endif %}
         </td>
         <td>

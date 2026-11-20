@@ -110,12 +110,14 @@
                   </button>
                 </div>
                 <input type="hidden" name="winner_{{ m.id }}" id="winner_input_{{ m.id }}" value="{{ m.winner_id or '' }}">
+                <input type="hidden" name="orig_winner_{{ m.id }}" value="{{ m.winner_id or '' }}">
                 <div class="btn-group w-100" role="group" aria-label="Match type selection">
                   <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='KO' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="KO">KO</button>
                   <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='JD' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="JD">JD</button>
                   <button type="button" class="btn btn-outline-secondary result-type-toggle {% if m.result_type=='TO' %}active{% endif %}" data-action="result" data-match-id="{{ m.id }}" data-value="TO">TO</button>
                 </div>
                 <input type="hidden" name="result_type_{{ m.id }}" id="result_type_input_{{ m.id }}" value="{{ m.result_type or '' }}">
+                <input type="hidden" name="orig_result_type_{{ m.id }}" value="{{ m.result_type or '' }}">
               {% endif %}
             </div>
           </div>
